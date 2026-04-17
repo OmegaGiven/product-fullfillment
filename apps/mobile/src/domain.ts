@@ -11,10 +11,14 @@ export const stepTypeSchema = z.enum([
   "capture-photos",
   "review-photos",
   "ocr-match",
+  "select-order-manual",
   "confirm-order",
   "preview-message",
   "approve-send",
-  "custom-checkpoint"
+  "custom-checkpoint",
+  "text-display",
+  "input-step",
+  "api-request"
 ]);
 export type StepType = z.infer<typeof stepTypeSchema>;
 

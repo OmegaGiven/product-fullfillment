@@ -1,6 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type {
   FulfillmentPhoto,
@@ -9,9 +9,11 @@ import type {
   WorkflowTemplate
 } from "../domain";
 import { useFulfillmentRun } from "../hooks/useFulfillmentRun";
+import { useMessageTemplates } from "../hooks/useMessageTemplates";
+import { renderMessageTemplate } from "../messages/renderMessageTemplate";
 import { useAppTheme } from "../providers/AppearanceProvider";
 import { useServices } from "../providers/AppProviders";
-import { spacing, type AppTheme } from "../theme";
+import type { AppTheme } from "../theme";
 import { createId, nowIso } from "../utils";
 
 type Props = {
@@ -64,10 +66,8 @@ function formatRecipient(
 }
 
 export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
-  const {
-    theme: { colors }
-  } = useAppTheme();
-  const styles = createStyles(colors);
+  const { theme } = useAppTheme();
+  const styles = createStyles(theme);
   const { state, refresh } = useFulfillmentRun(run.id);
   const {
     storageService,
@@ -79,7 +79,9 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [orders, setOrders] = useState<ImportedOrder[]>([]);
+  const [orderSearch, setOrderSearch] = useState("");
   const [isDebugExpanded, setIsDebugExpanded] = useState(false);
+  const { templates: messageTemplates } = useMessageTemplates();
 
   useEffect(() => {
     let isMounted = true;
@@ -110,6 +112,46 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
   const labelPhotos = currentState.photos.filter((photo) => photo.label === "label");
   const matchedOrder =
     orders.find((order) => order.id === currentState.run.matchedOrderId) ?? null;
+  const selectedMessageTemplateId =
+    typeof currentStep?.config.messageTemplateId === "string"
+      ? currentStep.config.messageTemplateId
+      : workflow.steps.find(
+            (step) =>
+              (step.type === "preview-message" || step.type === "approve-send") &&
+              typeof step.config.messageTemplateId === "string"
+          )?.config.messageTemplateId;
+  const selectedMessageTemplate =
+    messageTemplates.find((template) => template.id === selectedMessageTemplateId) ?? null;
+  const renderedTemplatePreview =
+    selectedMessageTemplate && matchedOrder
+      ? renderMessageTemplate(selectedMessageTemplate, matchedOrder)
+      : null;
+  const messagingTool =
+    typeof currentStep?.config.messagingTool === "string"
+      ? currentStep.config.messagingTool
+      : workflow.steps.find(
+            (step) =>
+              (step.type === "preview-message" || step.type === "approve-send") &&
+              typeof step.config.messagingTool === "string"
+          )?.config.messagingTool ?? "integration-message";
+  const filteredOrders = orders.filter((order) => {
+    const query = orderSearch.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+
+    return [
+      order.orderNumber,
+      order.buyerName,
+      order.integrationName,
+      order.integrationConnectionName ?? "",
+      order.shippingAddress.name
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+  const orderSearchPresets = ["", ...new Set(orders.map((order) => order.integrationKey))];
 
   async function addPhoto(label: "product" | "label") {
     setError(null);
@@ -169,6 +211,10 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
 
       if (currentStep.type === "confirm-order" && !currentState.run.matchedOrderId) {
         throw new Error("Select the correct matched order before continuing.");
+      }
+
+      if (currentStep.type === "select-order-manual" && !currentState.run.matchedOrderId) {
+        throw new Error("Select an order before continuing.");
       }
 
       if (currentStep.type === "preview-message") {
@@ -255,7 +301,6 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       </View>
 
       <View style={styles.featureCard}>
-        <Text style={styles.cardTitle}>{currentStep?.title}</Text>
         <Text style={styles.cardBody}>{currentStep?.description}</Text>
       </View>
 
@@ -423,9 +468,106 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
         </>
       ) : null}
 
+      {currentStep?.type === "select-order-manual" ? (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Manual Order Selection</Text>
+            <Text style={styles.cardBody}>
+              Search your pulled orders and choose one directly for this fulfillment run.
+            </Text>
+            <View style={styles.searchCard}>
+              <Text style={styles.searchLabel}>Search Orders</Text>
+              <TextInput
+                value={orderSearch}
+                onChangeText={setOrderSearch}
+                placeholder="Search by order, buyer, platform, or store"
+                placeholderTextColor={theme.colors.muted}
+                style={styles.searchInput}
+              />
+            </View>
+            <View style={styles.searchChipRow}>
+              {orderSearchPresets.map((preset) => (
+                <Pressable
+                  key={`preset:${preset || "all"}`}
+                  onPress={() => setOrderSearch(preset)}
+                  style={[
+                    styles.choiceChip,
+                    orderSearch === preset ? styles.choiceChipActive : null
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.choiceChipText,
+                      orderSearch === preset ? styles.choiceChipTextActive : null
+                    ]}
+                  >
+                    {preset ? `Filter ${preset}` : "All Orders"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Available Orders</Text>
+            {filteredOrders.length === 0 ? (
+              <Text style={styles.metaText}>No orders match the current search.</Text>
+            ) : (
+              filteredOrders.map((order) => {
+                const isSelected = currentState.run.matchedOrderId === order.id;
+
+                return (
+                  <Pressable
+                    key={order.id}
+                    onPress={() => chooseCandidate(order.id)}
+                    style={[
+                      styles.candidateRow,
+                      isSelected ? styles.candidateRowSelected : null
+                    ]}
+                  >
+                    <View style={styles.candidateHeader}>
+                      <View style={styles.candidateHeaderText}>
+                        <Text style={styles.candidateTitle}>
+                          {order.integrationConnectionName ?? order.integrationName} {order.orderNumber}
+                        </Text>
+                        <Text style={styles.metaText}>
+                          {order.integrationName} • {order.buyerName}
+                        </Text>
+                      </View>
+                      <View style={styles.selectPill}>
+                        <Text style={styles.selectPillText}>
+                          {isSelected ? "Selected" : "Tap to select"}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.compareValue}>{formatAddress(order)}</Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
+        </>
+      ) : null}
+
       {currentStep?.type === "preview-message" || currentStep?.type === "approve-send" ? (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Message Preview</Text>
+          <Text style={styles.metaText}>Delivery path: {messagingTool}</Text>
+          {selectedMessageTemplate ? (
+            <View style={styles.compareCard}>
+              <Text style={styles.compareTitle}>Selected Template</Text>
+              <Text style={styles.metaText}>{selectedMessageTemplate.name}</Text>
+              <Text style={styles.metaText}>Subject template: {selectedMessageTemplate.subject}</Text>
+              <Text style={styles.cardBody}>{selectedMessageTemplate.body}</Text>
+            </View>
+          ) : null}
+          {renderedTemplatePreview ? (
+            <View style={styles.compareCard}>
+              <Text style={styles.compareTitle}>Rendered Email</Text>
+              <Text style={styles.metaText}>Subject: {renderedTemplatePreview.subject}</Text>
+              <Text style={styles.cardBody}>{renderedTemplatePreview.body}</Text>
+            </View>
+          ) : null}
           {currentState.previewMessage ? (
             <>
               <Text style={styles.metaText}>Channel: {currentState.previewMessage.channel}</Text>
@@ -433,8 +575,58 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
               <Text style={styles.cardBody}>{currentState.previewMessage.body}</Text>
             </>
           ) : (
-            <Text style={styles.metaText}>Generate the preview from the prior step.</Text>
+            <Text style={styles.metaText}>
+              Generate the preview from the prior step. For email sends, the app currently hands off to the device mail composer; a server email provider can be added later behind the same message module.
+            </Text>
           )}
+        </View>
+      ) : null}
+
+      {currentStep?.type === "text-display" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Text Display Module</Text>
+          <Text style={styles.cardBody}>
+            {String(currentStep.config.displayText ?? "No display text configured for this step.")}
+          </Text>
+        </View>
+      ) : null}
+
+      {currentStep?.type === "input-step" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Input Module</Text>
+          <Text style={styles.metaText}>
+            Label: {String(currentStep.config.inputLabel ?? "Input")}
+          </Text>
+          <Text style={styles.metaText}>
+            Placeholder: {String(currentStep.config.inputPlaceholder ?? "No placeholder configured")}
+          </Text>
+          <Text style={styles.cardBody}>
+            This input module is currently a workflow placeholder. It is configurable in the workflow builder and can be expanded into saved operator input later.
+          </Text>
+        </View>
+      ) : null}
+
+      {currentStep?.type === "api-request" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>API Request Module (WIP)</Text>
+          <Text style={styles.metaText}>
+            Method: {String(currentStep.config.method ?? "POST")}
+          </Text>
+          <Text style={styles.metaText}>
+            Endpoint: {String(currentStep.config.endpoint ?? "Not configured")}
+          </Text>
+          <Text style={styles.cardBody}>
+            This module is marked WIP and does not execute requests yet. It currently serves as a configurable placeholder in the flow.
+          </Text>
+        </View>
+      ) : null}
+
+      {currentStep?.type === "custom-checkpoint" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Custom Checkpoint</Text>
+          <Text style={styles.cardBody}>
+            This step is a manual checkpoint. Review the instruction text above, then continue when complete.
+          </Text>
         </View>
       ) : null}
 
@@ -506,7 +698,8 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
   );
 }
 
-function createStyles(colors: AppTheme["colors"]) {
+function createStyles(theme: AppTheme) {
+const { colors, radius, spacing } = theme;
 return StyleSheet.create({
   container: {
     gap: spacing.lg
@@ -519,7 +712,7 @@ return StyleSheet.create({
   progressPill: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 999,
+    borderRadius: radius.pill,
     borderWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
@@ -539,7 +732,7 @@ return StyleSheet.create({
   card: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 24,
+    borderRadius: radius.xl,
     borderWidth: 1,
     gap: spacing.md,
     padding: spacing.lg
@@ -547,7 +740,7 @@ return StyleSheet.create({
   featureCard: {
     backgroundColor: colors.backgroundAccent,
     borderColor: colors.borderStrong,
-    borderRadius: 24,
+    borderRadius: radius.xl,
     borderWidth: 1,
     gap: spacing.sm,
     padding: spacing.lg
@@ -565,7 +758,7 @@ return StyleSheet.create({
   errorCard: {
     backgroundColor: colors.dangerSoft,
     borderColor: colors.danger,
-    borderRadius: 22,
+    borderRadius: radius.lg,
     borderWidth: 1,
     padding: spacing.md
   },
@@ -578,6 +771,51 @@ return StyleSheet.create({
     fontSize: 14,
     lineHeight: 20
   },
+  searchCard: {
+    gap: spacing.sm
+  },
+  searchLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    textTransform: "uppercase"
+  },
+  searchInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  searchChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  choiceChip: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  choiceChipActive: {
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.accent
+  },
+  choiceChipText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  choiceChipTextActive: {
+    color: colors.text
+  },
   buttonRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -589,7 +827,7 @@ return StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: colors.accent,
-    borderRadius: 20,
+    borderRadius: radius.lg,
     flex: 1,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md
@@ -603,7 +841,7 @@ return StyleSheet.create({
   secondaryButton: {
     backgroundColor: colors.background,
     borderColor: colors.borderStrong,
-    borderRadius: 18,
+    borderRadius: radius.md,
     borderWidth: 1,
     flex: 1,
     paddingHorizontal: spacing.md,
@@ -628,7 +866,7 @@ return StyleSheet.create({
   summaryCard: {
     backgroundColor: colors.surface,
     borderColor: colors.borderStrong,
-    borderRadius: 18,
+    borderRadius: radius.md,
     borderWidth: 1,
     flex: 1,
     gap: spacing.xs,
@@ -653,7 +891,7 @@ return StyleSheet.create({
   },
   photoPreview: {
     backgroundColor: colors.backgroundAccent,
-    borderRadius: 20,
+    borderRadius: radius.lg,
     height: 220,
     width: "100%"
   },
@@ -669,7 +907,7 @@ return StyleSheet.create({
   candidateRow: {
     backgroundColor: colors.backgroundAccent,
     borderColor: colors.border,
-    borderRadius: 20,
+    borderRadius: radius.lg,
     borderWidth: 1,
     gap: spacing.md,
     padding: spacing.md
@@ -695,7 +933,7 @@ return StyleSheet.create({
   },
   selectPill: {
     backgroundColor: colors.surfaceRaised,
-    borderRadius: 999,
+    borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs
   },
@@ -710,7 +948,7 @@ return StyleSheet.create({
   compareCard: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: radius.md,
     borderWidth: 1,
     gap: spacing.xs,
     padding: spacing.md
@@ -729,7 +967,7 @@ return StyleSheet.create({
   debugBanner: {
     backgroundColor: colors.backgroundAccent,
     borderColor: colors.borderStrong,
-    borderRadius: 18,
+    borderRadius: radius.md,
     borderWidth: 1,
     gap: spacing.sm,
     padding: spacing.md

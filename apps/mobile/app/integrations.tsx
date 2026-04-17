@@ -1,0 +1,756 @@
+import { useEffect, useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+
+import { AppNav } from "../src/components/AppNav";
+import { useToast } from "../src/providers/ToastProvider";
+import type { IntegrationConnection, IntegrationDefinition } from "../src/services/interfaces";
+import { useAppTheme } from "../src/providers/AppearanceProvider";
+import { useServices } from "../src/providers/AppProviders";
+import type { AppTheme } from "../src/theme";
+
+type DraftModes = Record<string, "mock" | "live">;
+type DraftValues = Record<string, Record<string, string>>;
+type DraftNames = Record<string, string>;
+
+const FALLBACK_INTEGRATION_CATALOG: IntegrationDefinition[] = [
+  {
+    integrationKey: "etsy",
+    integrationName: "Etsy",
+    description: "",
+    fields: [
+      { key: "apiKey", label: "API Key", placeholder: "Enter Etsy API key", secret: true },
+      { key: "shopId", label: "Shop ID", placeholder: "Enter Etsy shop ID", secret: false }
+    ]
+  },
+  {
+    integrationKey: "squarespace",
+    integrationName: "Squarespace",
+    description: "",
+    fields: [
+      {
+        key: "apiKey",
+        label: "API Key",
+        placeholder: "Enter Squarespace API key",
+        secret: true
+      },
+      { key: "siteId", label: "Site ID", placeholder: "Enter Squarespace site ID", secret: false }
+    ]
+  }
+];
+
+function buildDraftValues(connections: IntegrationConnection[]) {
+  return Object.fromEntries(
+    connections.map((connection) => [
+      connection.connectionId,
+      Object.fromEntries(connection.fields.map((field) => [field.key, ""]))
+    ])
+  ) as DraftValues;
+}
+
+export default function IntegrationsScreen() {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = createStyles(theme);
+  const { showToast } = useToast();
+  const { integrationAuthService, orderSyncService } = useServices();
+  const [connections, setConnections] = useState<IntegrationConnection[]>([]);
+  const [catalog, setCatalog] = useState<IntegrationDefinition[]>([]);
+  const [draftModes, setDraftModes] = useState<DraftModes>({});
+  const [draftNames, setDraftNames] = useState<DraftNames>({});
+  const [draftValues, setDraftValues] = useState<DraftValues>({});
+  const [error, setError] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAddIntegrationModalOpen, setIsAddIntegrationModalOpen] = useState(false);
+  const [selectedIntegrationKey, setSelectedIntegrationKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function refresh() {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const nextConnections = await integrationAuthService.listConnections();
+      const nextCatalog =
+        typeof integrationAuthService.listIntegrationCatalog === "function"
+          ? await integrationAuthService.listIntegrationCatalog()
+          : FALLBACK_INTEGRATION_CATALOG;
+      setCatalog(nextCatalog);
+      setConnections(nextConnections);
+      setDraftModes(
+        Object.fromEntries(
+          nextConnections.map((connection) => [connection.connectionId, connection.mode])
+        ) as DraftModes
+      );
+      setDraftNames(
+        Object.fromEntries(
+          nextConnections.map((connection) => [connection.connectionId, connection.connectionName])
+        ) as DraftNames
+      );
+      setDraftValues(buildDraftValues(nextConnections));
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function updateField(integrationKey: string, fieldKey: string, value: string) {
+    setDraftValues((current) => ({
+      ...current,
+      [integrationKey]: {
+        ...current[integrationKey],
+        [fieldKey]: value
+      }
+    }));
+  }
+
+  function updateConnectionName(connectionId: string, value: string) {
+    setDraftNames((current) => ({
+      ...current,
+      [connectionId]: value
+    }));
+  }
+
+  async function saveConnection(connectionId: string) {
+    const connection = connections.find((entry) => entry.connectionId === connectionId);
+    if (!connection) {
+      return;
+    }
+
+    setBusyKey(connectionId);
+    setError(null);
+
+    try {
+      await integrationAuthService.saveCredentials({
+        connectionId: connection.connectionId,
+        connectionName: draftNames[connection.connectionId] ?? connection.connectionName,
+        integrationKey: connection.integrationKey,
+        mode: draftModes[connection.connectionId] ?? "mock",
+        values: draftValues[connection.connectionId] ?? {}
+      });
+      await orderSyncService.syncOrders(connection.connectionId);
+      await refresh();
+      showToast("Saved configuration");
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function completeIntegrationSetup() {
+    if (!selectedIntegrationKey) {
+      return;
+    }
+
+    const setupKey = `new:${selectedIntegrationKey}`;
+    setBusyKey(setupKey);
+    setError(null);
+
+    try {
+      const connection = await integrationAuthService.saveCredentials({
+        connectionName: draftNames[setupKey] ?? "",
+        integrationKey: selectedIntegrationKey,
+        mode: draftModes[setupKey] ?? "mock",
+        values: draftValues[setupKey] ?? {}
+      });
+      await orderSyncService.syncOrders(connection.connectionId);
+      await refresh();
+      showToast("Saved configuration");
+      setIsAddIntegrationModalOpen(false);
+      setSelectedIntegrationKey(null);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function removeConnection(connectionId: string) {
+    setBusyKey(connectionId);
+    setError(null);
+
+    try {
+      await integrationAuthService.removeCredentials(connectionId);
+      await orderSyncService.syncOrders();
+      await refresh();
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function syncConnection(connectionId: string) {
+    setBusyKey(connectionId);
+    setError(null);
+
+    try {
+      await orderSyncService.syncOrders(connectionId);
+      await refresh();
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  const selectedIntegration =
+    catalog.find((connection) => connection.integrationKey === selectedIntegrationKey) ?? null;
+
+  return (
+    <>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <AppNav title="Integrations" active="integrations" />
+
+        {error ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.cardTitle}>Connections</Text>
+          <Pressable onPress={() => setIsAddIntegrationModalOpen(true)} style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>Add Integration</Text>
+          </Pressable>
+        </View>
+
+        {isLoading ? (
+          <View style={styles.card}>
+            <Text style={styles.cardBody}>Loading integrations...</Text>
+          </View>
+        ) : connections.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>No integrations added yet</Text>
+            <Text style={styles.cardBody}>
+              Add a mock or live integration connection to start syncing orders into the app.
+            </Text>
+          </View>
+        ) : (
+          connections.map((connection) => {
+            const activeMode = draftModes[connection.connectionId] ?? connection.mode;
+            const isBusy = busyKey === connection.connectionId;
+
+            return (
+              <View key={connection.connectionId} style={styles.card}>
+                <Text style={styles.integrationTypeText}>
+                  Integration Type: {connection.integrationName}
+                </Text>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Connection Name</Text>
+                  <TextInput
+                    autoCapitalize="words"
+                    onChangeText={(value) => updateConnectionName(connection.connectionId, value)}
+                    placeholder={`${connection.integrationName} Store`}
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    value={draftNames[connection.connectionId] ?? connection.connectionName}
+                  />
+                </View>
+
+                <View style={styles.metricsGrid}>
+                  <View style={styles.metricTile}>
+                    <Text style={styles.metricLabel}>Mode</Text>
+                    <Text style={styles.metricValue}>{activeMode}</Text>
+                  </View>
+                  <View style={styles.metricTile}>
+                    <Text style={styles.metricLabel}>Orders</Text>
+                    <Text style={styles.metricValue}>{connection.syncedOrderCount}</Text>
+                  </View>
+                  <View style={styles.metricTile}>
+                    <Text style={styles.metricLabel}>Stored</Text>
+                    <Text style={styles.metricValue}>
+                      {connection.hasStoredCredentials ? "Yes" : "No"}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.metaText}>
+                  Last saved: {connection.connectedAt ?? "No saved configuration"}
+                </Text>
+                <Text style={styles.metaText}>
+                  Last sync: {connection.lastSyncedAt ?? "No sync yet"}
+                </Text>
+
+                <View style={styles.modeRow}>
+                  <Pressable
+                    onPress={() =>
+                      setDraftModes((current) => ({
+                        ...current,
+                        [connection.connectionId]: "mock"
+                      }))
+                    }
+                    style={[
+                      styles.modeButton,
+                      activeMode === "mock" ? styles.modeButtonActive : null
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeButtonText,
+                        activeMode === "mock" ? styles.modeButtonTextActive : null
+                      ]}
+                    >
+                      Mock Mode
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      setDraftModes((current) => ({
+                        ...current,
+                        [connection.connectionId]: "live"
+                      }))
+                    }
+                    style={[
+                      styles.modeButton,
+                      activeMode === "live" ? styles.modeButtonActive : null
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeButtonText,
+                        activeMode === "live" ? styles.modeButtonTextActive : null
+                      ]}
+                    >
+                      Live Mode
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {connection.fields.map((field) => (
+                  <View key={field.key} style={styles.fieldGroup}>
+                    <Text style={styles.fieldLabel}>{field.label}</Text>
+                    <TextInput
+                      autoCapitalize="none"
+                      onChangeText={(value) =>
+                        updateField(connection.connectionId, field.key, value)
+                      }
+                      placeholder={field.placeholder}
+                      placeholderTextColor={colors.muted}
+                      secureTextEntry={field.secret}
+                      style={styles.input}
+                      value={draftValues[connection.connectionId]?.[field.key] ?? ""}
+                    />
+                  </View>
+                ))}
+
+                <View style={styles.actionRow}>
+                  <Pressable
+                    disabled={isBusy}
+                    onPress={() => syncConnection(connection.connectionId)}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {isBusy ? "Working..." : "Sync Orders"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={isBusy}
+                    onPress={() => void saveConnection(connection.connectionId)}
+                    style={styles.primaryButton}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {isBusy ? "Saving..." : "Save Configuration"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={isBusy}
+                    onPress={() => void removeConnection(connection.connectionId)}
+                    style={styles.ghostButton}
+                  >
+                    <Text style={styles.ghostButtonText}>Remove</Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isAddIntegrationModalOpen}
+        onRequestClose={() => {
+          setIsAddIntegrationModalOpen(false);
+          setSelectedIntegrationKey(null);
+        }}
+      >
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardTitle}>
+                {selectedIntegration ? selectedIntegration.integrationName : "Add Integration"}
+              </Text>
+              <Pressable
+                onPress={() => {
+                  setIsAddIntegrationModalOpen(false);
+                  setSelectedIntegrationKey(null);
+                }}
+                style={styles.closeButton}
+              >
+                <Text style={styles.closeButtonText}>Close</Text>
+              </Pressable>
+            </View>
+
+            {!selectedIntegration ? (
+              catalog.map((connection) => (
+                <Pressable
+                  key={connection.integrationKey}
+                  onPress={() => setSelectedIntegrationKey(connection.integrationKey)}
+                  style={styles.integrationChoiceCard}
+                >
+                  <Text style={styles.integrationChoiceTitle}>{connection.integrationName}</Text>
+                </Pressable>
+              ))
+            ) : (
+              <>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Connection Name</Text>
+                  <TextInput
+                    autoCapitalize="words"
+                    onChangeText={(value) =>
+                      setDraftNames((current) => ({
+                        ...current,
+                        [`new:${selectedIntegration.integrationKey}`]: value
+                      }))
+                    }
+                    placeholder={`${selectedIntegration.integrationName} Store`}
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    value={draftNames[`new:${selectedIntegration.integrationKey}`] ?? ""}
+                  />
+                </View>
+
+                <View style={styles.modeRow}>
+                  <Pressable
+                    onPress={() =>
+                      setDraftModes((current) => ({
+                        ...current,
+                        [`new:${selectedIntegration.integrationKey}`]: "mock"
+                      }))
+                    }
+                    style={[
+                      styles.modeButton,
+                      (draftModes[`new:${selectedIntegration.integrationKey}`] ?? "mock") === "mock"
+                        ? styles.modeButtonActive
+                        : null
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeButtonText,
+                        (draftModes[`new:${selectedIntegration.integrationKey}`] ?? "mock") === "mock"
+                          ? styles.modeButtonTextActive
+                          : null
+                      ]}
+                    >
+                      Mock Mode
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      setDraftModes((current) => ({
+                        ...current,
+                        [`new:${selectedIntegration.integrationKey}`]: "live"
+                      }))
+                    }
+                    style={[
+                      styles.modeButton,
+                      (draftModes[`new:${selectedIntegration.integrationKey}`] ?? "mock") === "live"
+                        ? styles.modeButtonActive
+                        : null
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeButtonText,
+                        (draftModes[`new:${selectedIntegration.integrationKey}`] ?? "mock") === "live"
+                          ? styles.modeButtonTextActive
+                          : null
+                      ]}
+                    >
+                      Live Mode
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {selectedIntegration.fields.map((field) => (
+                  <View key={field.key} style={styles.fieldGroup}>
+                    <Text style={styles.fieldLabel}>{field.label}</Text>
+                    <TextInput
+                      autoCapitalize="none"
+                      onChangeText={(value) =>
+                        updateField(`new:${selectedIntegration.integrationKey}`, field.key, value)
+                      }
+                      placeholder={field.placeholder}
+                      placeholderTextColor={colors.muted}
+                      secureTextEntry={field.secret}
+                      style={styles.input}
+                      value={draftValues[`new:${selectedIntegration.integrationKey}`]?.[field.key] ?? ""}
+                    />
+                  </View>
+                ))}
+
+                <View style={styles.actionRow}>
+                  <Pressable
+                    onPress={() => setSelectedIntegrationKey(null)}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>Back</Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={busyKey === `new:${selectedIntegration.integrationKey}`}
+                    onPress={() => void completeIntegrationSetup()}
+                    style={styles.primaryButton}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {busyKey === `new:${selectedIntegration.integrationKey}`
+                        ? "Saving..."
+                        : "Add Integration"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+function createStyles(theme: AppTheme) {
+  const { colors, radius, spacing } = theme;
+
+  return StyleSheet.create({
+    container: {
+      backgroundColor: colors.background,
+      flexGrow: 1,
+      gap: spacing.lg,
+      padding: spacing.xl
+    },
+    sectionHeaderRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.md,
+      justifyContent: "space-between"
+    },
+    card: {
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.border,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      gap: spacing.md,
+      padding: spacing.lg
+    },
+    cardTitle: {
+      color: colors.text,
+      fontSize: 21,
+      fontWeight: "700"
+    },
+    cardBody: {
+      color: colors.text,
+      fontSize: 15,
+      lineHeight: 22
+    },
+    errorCard: {
+      backgroundColor: colors.dangerSoft,
+      borderColor: colors.danger,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.md
+    },
+    errorText: {
+      color: colors.danger,
+      fontSize: 14,
+      lineHeight: 20
+    },
+    integrationTypeText: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: "700"
+    },
+    fieldGroup: {
+      gap: spacing.xs
+    },
+    fieldLabel: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700"
+    },
+    input: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      color: colors.text,
+      fontSize: 15,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md
+    },
+    metricsGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    metricTile: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexGrow: 1,
+      gap: spacing.xs,
+      minWidth: 90,
+      padding: spacing.md
+    },
+    metricLabel: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: "700",
+      letterSpacing: 0.8,
+      textTransform: "uppercase"
+    },
+    metricValue: {
+      color: colors.text,
+      fontSize: 22,
+      fontWeight: "700",
+      textTransform: "capitalize"
+    },
+    metaText: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20
+    },
+    modeRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    modeButton: {
+      alignItems: "center",
+      borderColor: colors.borderStrong,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flex: 1,
+      justifyContent: "center",
+      minWidth: 116,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    modeButtonActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary
+    },
+    modeButtonText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700",
+      textAlign: "center"
+    },
+    modeButtonTextActive: {
+      color: colors.surfaceRaised
+    },
+    actionRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    primaryButton: {
+      backgroundColor: colors.primary,
+      borderRadius: radius.md,
+      justifyContent: "center",
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md
+    },
+    primaryButtonText: {
+      color: colors.surfaceRaised,
+      fontSize: 15,
+      fontWeight: "700",
+      textAlign: "center"
+    },
+    secondaryButton: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      justifyContent: "center",
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md
+    },
+    secondaryButtonText: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: "700",
+      textAlign: "center"
+    },
+    ghostButton: {
+      backgroundColor: colors.dangerSoft,
+      borderColor: colors.danger,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      justifyContent: "center",
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md
+    },
+    ghostButtonText: {
+      color: colors.danger,
+      fontSize: 15,
+      fontWeight: "700"
+    },
+    modalScrim: {
+      alignItems: "center",
+      backgroundColor: "rgba(0, 0, 0, 0.42)",
+      flex: 1,
+      justifyContent: "center",
+      padding: spacing.lg
+    },
+    modalCard: {
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.xxl,
+      borderWidth: 1,
+      gap: spacing.md,
+      maxWidth: 420,
+      padding: spacing.xl,
+      width: "100%"
+    },
+    modalHeader: {
+      alignItems: "center",
+      flexDirection: "row",
+      justifyContent: "space-between"
+    },
+    closeButton: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    closeButtonText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700"
+    },
+    integrationChoiceCard: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      padding: spacing.md
+    },
+    integrationChoiceTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: "700"
+    }
+  });
+}

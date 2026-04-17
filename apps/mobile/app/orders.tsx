@@ -1,13 +1,24 @@
-import { useState } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import {
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
+} from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
 import { AppNav } from "../src/components/AppNav";
-import { useOrders } from "../src/hooks/useOrders";
-import type { ImportedOrder } from "../src/domain";
+import { useOrders, type EnrichedOrder } from "../src/hooks/useOrders";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
-import { spacing, type AppTheme } from "../src/theme";
+import { useServices } from "../src/providers/AppProviders";
+import type { IntegrationConnection } from "../src/services/interfaces";
+import type { AppTheme } from "../src/theme";
 
 function formatAddress(order: {
   shippingAddress: {
@@ -30,7 +41,7 @@ function escapeCsvValue(value: string) {
   return `"${normalized}"`;
 }
 
-function buildOrderExportCsv(orders: ImportedOrder[]) {
+function buildOrderExportCsv(orders: EnrichedOrder[]) {
   const header = [
     "Store",
     "Platform",
@@ -40,7 +51,8 @@ function buildOrderExportCsv(orders: ImportedOrder[]) {
     "Buyer Email",
     "Ship To",
     "Channels",
-    "Created"
+    "Created",
+    "Linked Run"
   ];
 
   const rows = orders.map((order) => [
@@ -52,7 +64,8 @@ function buildOrderExportCsv(orders: ImportedOrder[]) {
     order.buyerEmail ?? "",
     formatAddress(order),
     order.availableChannels.join(", "),
-    order.createdAt
+    order.createdAt,
+    order.linkedRunId ?? ""
   ]);
 
   return [header, ...rows]
@@ -61,14 +74,17 @@ function buildOrderExportCsv(orders: ImportedOrder[]) {
 }
 
 export default function OrdersScreen() {
-  const {
-    theme: { colors }
-  } = useAppTheme();
-  const styles = createStyles(colors);
-  const { orders, isLoading, syncAll } = useOrders();
+  const router = useRouter();
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = createStyles(theme);
+  const { orders, isLoading, refresh } = useOrders();
+  const { integrationAuthService, orderSyncService } = useServices();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncMenuOpen, setIsSyncMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connections, setConnections] = useState<IntegrationConnection[]>([]);
   const [filters, setFilters] = useState({
     store: "",
     platform: "",
@@ -78,6 +94,23 @@ export default function OrdersScreen() {
     channels: "",
     created: ""
   });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadConnections() {
+      const nextConnections = await integrationAuthService.listConnections();
+      if (isMounted) {
+        setConnections(nextConnections);
+      }
+    }
+
+    void loadConnections();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [integrationAuthService]);
 
   const filteredOrders = orders.filter((order) => {
     const createdLabel = new Date(order.createdAt).toLocaleDateString();
@@ -97,11 +130,14 @@ export default function OrdersScreen() {
     );
   });
 
-  async function handleSync() {
+  async function handleSync(connectionId?: string) {
     setIsSyncing(true);
     setError(null);
     try {
-      await syncAll();
+      await orderSyncService.syncOrders(connectionId);
+      await refresh();
+      setConnections(await integrationAuthService.listConnections());
+      setIsSyncMenuOpen(false);
     } catch (nextError) {
       setError((nextError as Error).message);
     } finally {
@@ -170,7 +206,7 @@ export default function OrdersScreen() {
       <View style={styles.filterActionsRow}>
         <View style={styles.filterButtons}>
           <Pressable
-            onPress={() => void handleSync()}
+            onPress={() => setIsSyncMenuOpen(true)}
             style={[styles.syncButton, isSyncing ? styles.buttonDisabled : null]}
             disabled={isSyncing}
           >
@@ -234,6 +270,7 @@ export default function OrdersScreen() {
               <Text style={[styles.tableCell, styles.cellAddress, styles.tableHeaderText]}>Ship To</Text>
               <Text style={[styles.tableCell, styles.cellChannels, styles.tableHeaderText]}>Channels</Text>
               <Text style={[styles.tableCell, styles.cellDate, styles.tableHeaderText]}>Created</Text>
+              <Text style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderText]}>Workflow</Text>
             </View>
             <View style={[styles.tableRow, styles.tableFilterRow]}>
               <View style={[styles.tableCell, styles.cellStore]}>
@@ -299,6 +336,7 @@ export default function OrdersScreen() {
                   value={filters.created}
                 />
               </View>
+              <View style={[styles.tableCell, styles.cellWorkflow]} />
             </View>
 
             {filteredOrders.length === 0 && !isLoading ? (
@@ -335,16 +373,84 @@ export default function OrdersScreen() {
                 <Text style={[styles.tableCell, styles.cellDate]}>
                   {new Date(order.createdAt).toLocaleDateString()}
                 </Text>
+                <View style={[styles.tableCell, styles.cellWorkflow]}>
+                  {order.linkedRunId ? (
+                    <Pressable
+                      onPress={() => router.push(`/runs/${order.linkedRunId}`)}
+                      style={styles.linkButton}
+                    >
+                      <Text style={styles.linkButtonText}>Open #{order.linkedRunId}</Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.cellSecondaryText}>No workflow</Text>
+                  )}
+                </View>
               </View>
             ))}
           </View>
         </ScrollView>
       </View>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isSyncMenuOpen}
+        onRequestClose={() => {
+          if (!isSyncing) {
+            setIsSyncMenuOpen(false);
+          }
+        }}
+      >
+        <View style={styles.modalScrim}>
+          <View style={styles.syncMenuCard}>
+            <View style={styles.syncMenuHeader}>
+              <Text style={styles.syncMenuTitle}>Sync Orders</Text>
+              <Pressable
+                onPress={() => setIsSyncMenuOpen(false)}
+                style={styles.syncMenuCloseButton}
+                disabled={isSyncing}
+              >
+                <Text style={styles.syncMenuCloseButtonText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={() => void handleSync()}
+              style={[styles.syncMenuOption, isSyncing ? styles.buttonDisabled : null]}
+              disabled={isSyncing}
+            >
+              <Text style={styles.syncMenuOptionTitle}>Sync All</Text>
+              <Text style={styles.syncMenuOptionMeta}>
+                Pull orders from every configured integration.
+              </Text>
+            </Pressable>
+
+            {connections.map((connection) => (
+              <Pressable
+                key={connection.connectionId}
+                onPress={() => void handleSync(connection.connectionId)}
+                style={[styles.syncMenuOption, isSyncing ? styles.buttonDisabled : null]}
+                disabled={isSyncing}
+              >
+                <Text style={styles.syncMenuOptionTitle}>{connection.connectionName}</Text>
+                <Text style={styles.syncMenuOptionMeta}>
+                  {connection.integrationName} • {connection.mode}
+                </Text>
+              </Pressable>
+            ))}
+
+            {connections.length === 0 ? (
+              <Text style={styles.syncMenuEmptyText}>No integrations are configured yet.</Text>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
 
-function createStyles(colors: AppTheme["colors"]) {
+function createStyles(theme: AppTheme) {
+  const { colors, radius, spacing } = theme;
   return StyleSheet.create({
     container: {
       backgroundColor: colors.background,
@@ -354,7 +460,7 @@ function createStyles(colors: AppTheme["colors"]) {
     },
     syncButton: {
       backgroundColor: colors.accent,
-      borderRadius: 999,
+      borderRadius: radius.pill,
       paddingHorizontal: spacing.lg,
       paddingVertical: spacing.sm
     },
@@ -366,10 +472,72 @@ function createStyles(colors: AppTheme["colors"]) {
       fontSize: 14,
       fontWeight: "700"
     },
+    modalScrim: {
+      alignItems: "center",
+      backgroundColor: "rgba(0, 0, 0, 0.42)",
+      flex: 1,
+      justifyContent: "center",
+      padding: spacing.lg
+    },
+    syncMenuCard: {
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      gap: spacing.sm,
+      maxWidth: 420,
+      padding: spacing.lg,
+      width: "100%"
+    },
+    syncMenuHeader: {
+      alignItems: "center",
+      flexDirection: "row",
+      justifyContent: "space-between"
+    },
+    syncMenuTitle: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: "700"
+    },
+    syncMenuCloseButton: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    syncMenuCloseButtonText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700"
+    },
+    syncMenuOption: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      gap: spacing.xs,
+      padding: spacing.md
+    },
+    syncMenuOptionTitle: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: "700"
+    },
+    syncMenuOptionMeta: {
+      color: colors.muted,
+      fontSize: 13
+    },
+    syncMenuEmptyText: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20
+    },
     errorCard: {
       backgroundColor: colors.dangerSoft,
       borderColor: colors.danger,
-      borderRadius: 22,
+      borderRadius: radius.lg,
       borderWidth: 1,
       gap: spacing.xs,
       padding: spacing.lg
@@ -408,7 +576,7 @@ function createStyles(colors: AppTheme["colors"]) {
     },
     exportButton: {
       backgroundColor: colors.accent,
-      borderRadius: 999,
+      borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm
     },
@@ -420,7 +588,7 @@ function createStyles(colors: AppTheme["colors"]) {
     clearButton: {
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.borderStrong,
-      borderRadius: 999,
+      borderRadius: radius.pill,
       borderWidth: 1,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm
@@ -433,7 +601,7 @@ function createStyles(colors: AppTheme["colors"]) {
     statCard: {
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.border,
-      borderRadius: 22,
+      borderRadius: radius.lg,
       borderWidth: 1,
       gap: spacing.xs,
       minWidth: 110,
@@ -455,7 +623,7 @@ function createStyles(colors: AppTheme["colors"]) {
     tableCard: {
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.border,
-      borderRadius: 24,
+      borderRadius: radius.xl,
       borderWidth: 1,
       overflow: "hidden"
     },
@@ -498,7 +666,7 @@ function createStyles(colors: AppTheme["colors"]) {
     filterInput: {
       backgroundColor: colors.background,
       borderColor: colors.border,
-      borderRadius: 12,
+      borderRadius: radius.sm,
       borderWidth: 1,
       color: colors.text,
       fontSize: 14,
@@ -542,6 +710,11 @@ function createStyles(colors: AppTheme["colors"]) {
       flexGrow: 1,
       minWidth: 120
     },
+    cellWorkflow: {
+      flexBasis: 150,
+      flexGrow: 1,
+      minWidth: 150
+    },
     cellPrimaryText: {
       color: colors.text,
       fontSize: 14,
@@ -550,6 +723,20 @@ function createStyles(colors: AppTheme["colors"]) {
     cellSecondaryText: {
       color: colors.muted,
       fontSize: 13
+    },
+    linkButton: {
+      alignSelf: "flex-start",
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    linkButtonText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700"
     },
     emptyRow: {
       gap: spacing.sm,

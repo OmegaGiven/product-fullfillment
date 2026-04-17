@@ -1,4 +1,4 @@
-import type { RunId, WorkflowRunState } from "../../domain";
+import type { RunId, WorkflowRunState, WorkflowTemplate } from "../../domain";
 import type { WorkflowService } from "../interfaces";
 import { DEFAULT_WORKFLOW_TEMPLATE } from "../../workflow/defaultWorkflow";
 import { clamp, nowIso } from "../../utils";
@@ -30,13 +30,38 @@ export class LocalWorkflowService implements WorkflowService {
     return workflow ?? DEFAULT_WORKFLOW_TEMPLATE;
   }
 
-  async createFulfillmentRun() {
-    const workflow = await this.getDefaultWorkflow();
+  async listWorkflowTemplates() {
+    const templates = await this.storageService.listWorkflowTemplates();
+    return templates.sort((a, b) => {
+      if (a.id === DEFAULT_WORKFLOW_TEMPLATE.id) {
+        return -1;
+      }
+      if (b.id === DEFAULT_WORKFLOW_TEMPLATE.id) {
+        return 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  async saveWorkflowTemplate(template: WorkflowTemplate) {
+    await this.storageService.saveWorkflowTemplate(template);
+    return template;
+  }
+
+  async deleteWorkflowTemplate(templateId: string) {
+    await this.storageService.deleteWorkflowTemplate(templateId);
+  }
+
+  async createFulfillmentRun(templateId?: string) {
+    const workflow =
+      templateId == null
+        ? await this.getDefaultWorkflow()
+        : ((await this.storageService.getWorkflowTemplate(templateId)) ?? (await this.getDefaultWorkflow()));
     const timestamp = nowIso();
     const runId = await this.createRunId();
     const run = {
       id: runId,
-      name: `Fulfillment ${new Date().toLocaleString()}`,
+      name: `${workflow.name}: #${runId}`,
       executionMode: workflow.executionMode,
       workflowTemplateId: workflow.id,
       currentStepIndex: 0,
@@ -78,6 +103,10 @@ export class LocalWorkflowService implements WorkflowService {
         updatedAt: nowIso()
       }
     });
+  }
+
+  async deleteFulfillmentRun(runId: RunId) {
+    await this.storageService.deleteRunState(runId);
   }
 
   async goToPreviousStep(runId: RunId) {

@@ -58,3 +58,11 @@ export async function listRecords(namespace: string) {
 export async function deleteRecords(namespace: string) {
   writeNamespace(namespace, []);
 }
+
+export async function deleteRecord(namespace: string, id: string) {
+  const records = readNamespace(namespace);
+  writeNamespace(
+    namespace,
+    records.filter((record) => record.id !== id)
+  );
+}

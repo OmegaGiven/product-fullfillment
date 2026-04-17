@@ -4,6 +4,7 @@ import type {
   ImportedOrder,
   MatchCandidate,
   MessageAttempt,
+  MessageTemplate,
   MessageChannel,
   OcrExtraction,
   RunId,
@@ -48,23 +49,41 @@ export type IntegrationCredentialInput = {
   values: Record<string, string>;
 };
 
+export type OrderRunLink = {
+  orderId: string;
+  runId: RunId;
+};
+
 export interface StorageService {
   bootstrap(): Promise<void>;
   listRuns(): Promise<FulfillmentRun[]>;
   getRunState(runId: RunId): Promise<WorkflowRunState | null>;
   saveRunState(state: WorkflowRunState): Promise<void>;
+  deleteRunState(runId: RunId): Promise<void>;
   listOrders(): Promise<ImportedOrder[]>;
+  listOrderRunLinks(): Promise<OrderRunLink[]>;
   replaceOrders(orders: ImportedOrder[]): Promise<void>;
   saveOrders(orders: ImportedOrder[]): Promise<void>;
+  saveOrderRunLink(orderId: string, runId: RunId): Promise<void>;
+  listWorkflowTemplates(): Promise<WorkflowTemplate[]>;
   getWorkflowTemplate(templateId: string): Promise<WorkflowTemplate | null>;
   saveWorkflowTemplate(template: WorkflowTemplate): Promise<void>;
+  deleteWorkflowTemplate(templateId: string): Promise<void>;
+  listMessageTemplates(): Promise<MessageTemplate[]>;
+  getMessageTemplate(templateId: string): Promise<MessageTemplate | null>;
+  saveMessageTemplate(template: MessageTemplate): Promise<void>;
+  deleteMessageTemplate(templateId: string): Promise<void>;
 }
 
 export interface WorkflowService {
   getDefaultWorkflow(): Promise<WorkflowTemplate>;
-  createFulfillmentRun(): Promise<FulfillmentRun>;
+  listWorkflowTemplates(): Promise<WorkflowTemplate[]>;
+  saveWorkflowTemplate(template: WorkflowTemplate): Promise<WorkflowTemplate>;
+  deleteWorkflowTemplate(templateId: string): Promise<void>;
+  createFulfillmentRun(templateId?: string): Promise<FulfillmentRun>;
   getRunState(runId: RunId): Promise<WorkflowRunState | null>;
   saveRunState(state: WorkflowRunState): Promise<void>;
+  deleteFulfillmentRun(runId: RunId): Promise<void>;
   goToPreviousStep(runId: RunId): Promise<WorkflowRunState>;
   advanceStep(runId: RunId): Promise<WorkflowRunState>;
 }

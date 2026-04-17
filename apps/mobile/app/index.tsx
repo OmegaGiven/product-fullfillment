@@ -4,17 +4,18 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppNav } from "../src/components/AppNav";
 import { useBootstrapApp } from "../src/hooks/useBootstrapApp";
 import { useFulfillmentRuns } from "../src/hooks/useFulfillmentRuns";
+import { useWorkflowTemplates } from "../src/hooks/useWorkflowTemplates";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
-import { spacing, type AppTheme } from "../src/theme";
+import type { AppTheme } from "../src/theme";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const {
-    theme: { colors }
-  } = useAppTheme();
-  const styles = createStyles(colors);
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = createStyles(theme);
   const { isReady, error } = useBootstrapApp();
   const { runs, createRun } = useFulfillmentRuns();
+  const { templates } = useWorkflowTemplates();
   const activeRuns = runs.filter((run) => run.status !== "completed").length;
   const completedRuns = runs.filter((run) => run.status === "completed").length;
 
@@ -45,18 +46,18 @@ export default function HomeScreen() {
 
       <View style={styles.heroCard}>
         <View style={styles.heroActions}>
-          <Pressable
-            onPress={async () => {
-              const run = await createRun();
-              router.push(`/runs/${run.id}`);
-            }}
-            style={styles.primaryButton}
-          >
-            <Text style={styles.primaryButtonText}>Start New Fulfillment</Text>
-          </Pressable>
-          <Pressable onPress={() => router.push("/orders")} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>View Orders</Text>
-          </Pressable>
+          {templates.map((template) => (
+            <Pressable
+              key={template.id}
+              onPress={async () => {
+                const run = await createRun(template.id);
+                router.push(`/runs/${run.id}`);
+              }}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>Start {template.name}</Text>
+            </Pressable>
+          ))}
         </View>
       </View>
 
@@ -85,35 +86,41 @@ export default function HomeScreen() {
           <Text style={styles.body}>Create the first run to test the capture, OCR, and confirmation flow.</Text>
         </View>
       ) : (
-        runs.map((run) => (
-          <Pressable
-            key={run.id}
-            onPress={() => router.push(`/runs/${run.id}`)}
-            style={styles.runCard}
-          >
-            <View style={styles.runCardTop}>
-              <Text style={styles.cardTitle}>{run.name}</Text>
-              <View
-                style={[
-                  styles.statusPill,
-                  run.status === "completed" ? styles.statusPillCompleted : styles.statusPillActive
-                ]}
-              >
-                <Text style={styles.statusPillText}>{run.status}</Text>
+        runs.map((run) => {
+          const template = templates.find((entry) => entry.id === run.workflowTemplateId);
+          const runTitle = `${template?.name ?? run.name}: #${run.id}`;
+
+          return (
+            <Pressable
+              key={run.id}
+              onPress={() => router.push(`/runs/${run.id}`)}
+              style={styles.runCard}
+            >
+              <View style={styles.runCardTop}>
+                <Text style={styles.cardTitle}>{runTitle}</Text>
+                <View
+                  style={[
+                    styles.statusPill,
+                    run.status === "completed" ? styles.statusPillCompleted : styles.statusPillActive
+                  ]}
+                >
+                  <Text style={styles.statusPillText}>{run.status}</Text>
+                </View>
               </View>
-            </View>
-            <Text style={styles.cardMeta}>
-              Step {run.currentStepIndex + 1} of {run.stepOrder.length}
-            </Text>
-            <Text style={styles.cardMeta}>Execution mode: {run.executionMode}</Text>
-          </Pressable>
-        ))
+              <Text style={styles.cardMeta}>
+                Step {run.currentStepIndex + 1} of {run.stepOrder.length}
+              </Text>
+              <Text style={styles.cardMeta}>Execution mode: {run.executionMode}</Text>
+            </Pressable>
+          );
+        })
       )}
     </ScrollView>
   );
 }
 
-function createStyles(colors: AppTheme["colors"]) {
+function createStyles(theme: AppTheme) {
+const { colors, radius, spacing } = theme;
 return StyleSheet.create({
   container: {
     backgroundColor: colors.background,
@@ -131,7 +138,7 @@ return StyleSheet.create({
   loadingCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 28,
+    borderRadius: radius.xxl,
     borderWidth: 1,
     gap: spacing.sm,
     maxWidth: 420,
@@ -140,7 +147,7 @@ return StyleSheet.create({
   errorCard: {
     backgroundColor: colors.dangerSoft,
     borderColor: colors.danger,
-    borderRadius: 28,
+    borderRadius: radius.xxl,
     borderWidth: 1,
     gap: spacing.sm,
     maxWidth: 420,
@@ -154,7 +161,7 @@ return StyleSheet.create({
   },
   heroCard: {
     backgroundColor: colors.primaryDark,
-    borderRadius: 30,
+    borderRadius: radius.xxl,
     gap: spacing.md,
     overflow: "hidden",
     padding: spacing.xl
@@ -178,7 +185,7 @@ return StyleSheet.create({
   primaryButton: {
     alignSelf: "flex-start",
     backgroundColor: colors.accent,
-    borderRadius: 18,
+    borderRadius: radius.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md
   },
@@ -191,7 +198,7 @@ return StyleSheet.create({
     alignSelf: "flex-start",
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.borderStrong,
-    borderRadius: 18,
+    borderRadius: radius.md,
     borderWidth: 1,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md
@@ -209,7 +216,7 @@ return StyleSheet.create({
   statCard: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 22,
+    borderRadius: radius.lg,
     borderWidth: 1,
     flexGrow: 1,
     gap: spacing.xs,
@@ -239,7 +246,7 @@ return StyleSheet.create({
   emptyCard: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 24,
+    borderRadius: radius.xl,
     borderWidth: 1,
     gap: spacing.sm,
     padding: spacing.xl
@@ -252,7 +259,7 @@ return StyleSheet.create({
   runCard: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 22,
+    borderRadius: radius.lg,
     borderWidth: 1,
     gap: spacing.sm,
     padding: spacing.lg
@@ -274,7 +281,7 @@ return StyleSheet.create({
     fontSize: 14
   },
   statusPill: {
-    borderRadius: 999,
+    borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs
   },

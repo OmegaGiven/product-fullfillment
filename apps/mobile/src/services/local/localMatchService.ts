@@ -76,6 +76,7 @@ export class LocalMatchService implements MatchService {
     };
 
     await this.storageService.saveRunState(nextState);
+    await this.storageService.saveOrderRunLink(orderId, runId);
     return nextState;
   }
 }

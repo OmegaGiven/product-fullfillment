@@ -2,27 +2,33 @@ import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useAppTheme } from "../providers/AppearanceProvider";
-import { spacing, type AppTheme } from "../theme";
+import type { AppTheme } from "../theme";
 
-type NavKey = "home" | "orders" | "user";
+type NavKey = "home" | "orders" | "history" | "workflows" | "templates" | "integrations" | "user";
 
 type Props = {
   title: string;
   active?: NavKey | null;
 };
 
-const NAV_ITEMS: { key: NavKey; label: string; href: "/" | "/orders" | "/settings" }[] = [
+const NAV_ITEMS: {
+  key: NavKey;
+  label: string;
+  href: "/" | "/orders" | "/history" | "/workflows" | "/templates" | "/integrations" | "/settings";
+}[] = [
   { key: "home", label: "Home", href: "/" },
   { key: "orders", label: "Orders", href: "/orders" },
+  { key: "history", label: "Fulfillments", href: "/history" },
+  { key: "workflows", label: "Workflows", href: "/workflows" },
+  { key: "templates", label: "Templates", href: "/templates" },
+  { key: "integrations", label: "Integrations", href: "/integrations" },
   { key: "user", label: "User", href: "/settings" }
 ];
 
 export function AppNav({ title, active = null }: Props) {
   const router = useRouter();
-  const {
-    theme: { colors }
-  } = useAppTheme();
-  const styles = createStyles(colors);
+  const { theme } = useAppTheme();
+  const styles = createStyles(theme);
 
   return (
     <View style={styles.topRow}>
@@ -47,7 +53,8 @@ export function AppNav({ title, active = null }: Props) {
   );
 }
 
-function createStyles(colors: AppTheme["colors"]) {
+function createStyles(theme: AppTheme) {
+  const { colors, radius, spacing } = theme;
   return StyleSheet.create({
     topRow: {
       alignItems: "center",
@@ -62,12 +69,14 @@ function createStyles(colors: AppTheme["colors"]) {
     },
     actionsRow: {
       flexDirection: "row",
-      gap: spacing.sm
+      flexWrap: "wrap",
+      gap: spacing.sm,
+      justifyContent: "flex-end"
     },
     navButton: {
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.borderStrong,
-      borderRadius: 999,
+      borderRadius: radius.pill,
       borderWidth: 1,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm

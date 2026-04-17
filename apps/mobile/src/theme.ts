@@ -1,4 +1,4 @@
-export const spacing = {
+const baseSpacing = {
   xs: 6,
   sm: 10,
   md: 14,
@@ -6,6 +6,18 @@ export const spacing = {
   xl: 28,
   xxl: 36
 };
+
+const baseRadius = {
+  sm: 12,
+  md: 16,
+  lg: 20,
+  xl: 24,
+  xxl: 30,
+  pill: 999
+};
+
+export const spacing = baseSpacing;
+export const radius = baseRadius;
 
 export type AppearanceMode = "light" | "dark";
 export type AccentColor = string;
@@ -34,12 +46,15 @@ type AccentColors = {
 
 export type AppTheme = {
   colors: BaseColors & AccentColors;
-  spacing: typeof spacing;
+  radius: typeof baseRadius;
+  spacing: typeof baseSpacing;
 };
 
 export const defaultAppearance = {
   mode: "light" as AppearanceMode,
-  accentColor: "#c56f2a" as AccentColor
+  accentColor: "#c56f2a" as AccentColor,
+  radiusScale: 1,
+  spacingScale: 1
 };
 
 const lightBase: BaseColors = {
@@ -124,9 +139,17 @@ function soften(hex: string, mode: AppearanceMode) {
   return mode === "dark" ? mix(hex, "#ffffff", 0.14) : mix(hex, "#ffffff", 0.76);
 }
 
+function scaleRecord<T extends Record<string, number>>(record: T, scale: number) {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, Math.round(value * scale)])
+  ) as T;
+}
+
 export function buildTheme(
   mode: AppearanceMode = defaultAppearance.mode,
-  accentColor: AccentColor = defaultAppearance.accentColor
+  accentColor: AccentColor = defaultAppearance.accentColor,
+  spacingScale = defaultAppearance.spacingScale,
+  radiusScale = defaultAppearance.radiusScale
 ): AppTheme {
   const base = mode === "dark" ? darkBase : lightBase;
 
@@ -138,6 +161,7 @@ export function buildTheme(
       accent: accentColor,
       accentSoft: soften(accentColor, mode)
     },
-    spacing
+    radius: scaleRecord(baseRadius, radiusScale),
+    spacing: scaleRecord(baseSpacing, spacingScale)
   };
 }

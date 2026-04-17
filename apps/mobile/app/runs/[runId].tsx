@@ -5,7 +5,7 @@ import { AppNav } from "../../src/components/AppNav";
 import type { RunId } from "../../src/domain";
 import { useAppTheme } from "../../src/providers/AppearanceProvider";
 import { useFulfillmentRun } from "../../src/hooks/useFulfillmentRun";
-import { spacing, type AppTheme } from "../../src/theme";
+import type { AppTheme } from "../../src/theme";
 import { WorkflowScreen } from "../../src/workflow/WorkflowScreen";
 
 function normalizeRunId(value?: string | string[]): RunId | undefined {
@@ -18,10 +18,9 @@ function normalizeRunId(value?: string | string[]): RunId | undefined {
 }
 
 export default function FulfillmentRunScreen() {
-  const {
-    theme: { colors }
-  } = useAppTheme();
-  const styles = createStyles(colors);
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = createStyles(theme);
   const params = useLocalSearchParams<{ runId: string }>();
   const runId = normalizeRunId(params.runId);
   const { run, workflow, isLoading, refresh } = useFulfillmentRun(runId);
@@ -41,11 +40,12 @@ export default function FulfillmentRunScreen() {
 
       <View style={styles.heroCard}>
         <View style={styles.titleRow}>
-          <Text style={styles.title}>{run.name}</Text>
+          <Text style={styles.title}>{`${workflow.name}: #${run.id}`}</Text>
           <View style={[styles.badge, styles.badgeAccent]}>
             <Text style={styles.badgeText}>{run.status}</Text>
           </View>
         </View>
+        <Text style={styles.metaText}>{new Date(run.createdAt).toLocaleString()}</Text>
       </View>
 
       <WorkflowScreen run={run} workflow={workflow} onRunUpdated={refresh} />
@@ -53,7 +53,8 @@ export default function FulfillmentRunScreen() {
   );
 }
 
-function createStyles(colors: AppTheme["colors"]) {
+function createStyles(theme: AppTheme) {
+const { colors, radius, spacing } = theme;
 return StyleSheet.create({
   container: {
     backgroundColor: colors.background,
@@ -74,7 +75,7 @@ return StyleSheet.create({
   heroCard: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 28,
+    borderRadius: radius.xxl,
     borderWidth: 1,
     gap: spacing.sm,
     padding: spacing.xl
@@ -88,14 +89,19 @@ return StyleSheet.create({
   title: {
     color: colors.text,
     flex: 1,
-    fontSize: 30,
+    fontSize: 24,
     fontWeight: "700",
-    lineHeight: 36
+    lineHeight: 30
+  },
+  metaText: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20
   },
   badge: {
     backgroundColor: colors.background,
     borderColor: colors.border,
-    borderRadius: 999,
+    borderRadius: radius.pill,
     borderWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm

@@ -15,11 +15,16 @@ export function useFulfillmentRuns() {
     void refresh();
   }, [refresh]);
 
-  const createRun = useCallback(async () => {
-    const run = await workflowService.createFulfillmentRun();
+  const createRun = useCallback(async (templateId?: string) => {
+    const run = await workflowService.createFulfillmentRun(templateId);
     await refresh();
     return run;
   }, [refresh, workflowService]);
 
-  return { runs, refresh, createRun };
+  const deleteRun = useCallback(async (runId: FulfillmentRun["id"]) => {
+    await workflowService.deleteFulfillmentRun(runId);
+    await refresh();
+  }, [refresh, workflowService]);
+
+  return { runs, refresh, createRun, deleteRun };
 }

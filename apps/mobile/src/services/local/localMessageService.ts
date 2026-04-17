@@ -1,21 +1,39 @@
 import * as MailComposer from "expo-mail-composer";
 
-import type { RunId } from "../../domain";
+import type { MessageTemplate, RunId } from "../../domain";
+import { renderMessageTemplate } from "../../messages/renderMessageTemplate";
 import type { MessageService } from "../interfaces";
 import { createId, nowIso } from "../../utils";
 
 import type { LocalStorageService } from "./localStorageService";
 import { seededTemplates } from "./seedData";
 
-function fillTemplate(templateBody: string, values: Record<string, string>) {
-  return Object.entries(values).reduce(
-    (body, [key, value]) => body.split(`{{${key}}}`).join(value),
-    templateBody
-  );
-}
-
 export class LocalMessageService implements MessageService {
   constructor(private storageService: LocalStorageService) {}
+
+  private async resolveTemplate(runId: RunId): Promise<MessageTemplate> {
+    const state = await this.storageService.getRunState(runId);
+    if (!state) {
+      throw new Error("Fulfillment run not found.");
+    }
+
+    const workflow = await this.storageService.getWorkflowTemplate(state.run.workflowTemplateId);
+    const selectedTemplateId = workflow?.steps.find(
+      (step) =>
+        (step.type === "preview-message" || step.type === "approve-send") &&
+        typeof step.config.messageTemplateId === "string"
+    )?.config.messageTemplateId;
+
+    if (typeof selectedTemplateId === "string") {
+      const selectedTemplate = await this.storageService.getMessageTemplate(selectedTemplateId);
+      if (selectedTemplate) {
+        return selectedTemplate;
+      }
+    }
+
+    const storedTemplates = await this.storageService.listMessageTemplates();
+    return storedTemplates[0] ?? seededTemplates[0];
+  }
 
   async generateMessagePreview(runId: RunId) {
     const state = await this.storageService.getRunState(runId);
@@ -32,26 +50,21 @@ export class LocalMessageService implements MessageService {
       throw new Error("Matched order was not found.");
     }
 
-    const template = seededTemplates[0];
+    const template = await this.resolveTemplate(runId);
     const channel = order.availableChannels.includes("integration-message")
       ? "integration-message"
       : order.buyerEmail
         ? "email"
         : "manual";
 
+    const rendered = renderMessageTemplate(template, order);
     const preview = {
       id: createId("message"),
       runId,
       channel,
       status: channel === "manual" ? "blocked" : "pending",
-      subject: fillTemplate(template.subject, {
-        orderNumber: order.orderNumber,
-        buyerName: order.buyerName
-      }),
-      body: fillTemplate(template.body, {
-        orderNumber: order.orderNumber,
-        buyerName: order.buyerName
-      }),
+      subject: rendered.subject,
+      body: rendered.body,
       createdAt: nowIso()
     } as const;
 

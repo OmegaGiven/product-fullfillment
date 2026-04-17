@@ -12,17 +12,34 @@ import {
 type AppearanceState = {
   mode: AppearanceMode;
   accentColor: AccentColor;
+  radiusScale: number;
+  spacingScale: number;
 };
 
 type AppearanceContextValue = {
   accentColor: AccentColor;
   mode: AppearanceMode;
+  radiusScale: number;
   setAccentColor: (accentColor: AccentColor) => Promise<void>;
   setMode: (mode: AppearanceMode) => Promise<void>;
+  setRadiusScale: (radiusScale: number) => Promise<void>;
+  setSpacingScale: (spacingScale: number) => Promise<void>;
+  spacingScale: number;
   theme: AppTheme;
 };
 
 const APPEARANCE_KEY = "appearance-preferences";
+const MIN_RADIUS_SCALE = 0;
+const MIN_SPACING_SCALE = 0.1;
+const MAX_SCALE = 1.5;
+
+function clampRadiusScale(value: number) {
+  return Math.min(Math.max(value, MIN_RADIUS_SCALE), MAX_SCALE);
+}
+
+function clampSpacingScale(value: number) {
+  return Math.min(Math.max(value, MIN_SPACING_SCALE), MAX_SCALE);
+}
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 
@@ -40,7 +57,15 @@ export function AppearanceProvider({ children }: PropsWithChildren) {
           accentColor:
             typeof stored.accentColor === "string"
               ? stored.accentColor
-              : defaultAppearance.accentColor
+              : defaultAppearance.accentColor,
+          radiusScale:
+            typeof stored.radiusScale === "number"
+              ? clampRadiusScale(stored.radiusScale)
+              : defaultAppearance.radiusScale,
+          spacingScale:
+            typeof stored.spacingScale === "number"
+              ? clampSpacingScale(stored.spacingScale)
+              : defaultAppearance.spacingScale
         });
       }
     }
@@ -61,13 +86,26 @@ export function AppearanceProvider({ children }: PropsWithChildren) {
     return {
       accentColor: appearance.accentColor,
       mode: appearance.mode,
+      radiusScale: appearance.radiusScale,
       setAccentColor: async (accentColor: AccentColor) => {
         await persist({ ...appearance, accentColor });
       },
       setMode: async (mode: AppearanceMode) => {
         await persist({ ...appearance, mode });
       },
-      theme: buildTheme(appearance.mode, appearance.accentColor)
+      setRadiusScale: async (radiusScale: number) => {
+        await persist({ ...appearance, radiusScale: clampRadiusScale(radiusScale) });
+      },
+      setSpacingScale: async (spacingScale: number) => {
+        await persist({ ...appearance, spacingScale: clampSpacingScale(spacingScale) });
+      },
+      spacingScale: appearance.spacingScale,
+      theme: buildTheme(
+        appearance.mode,
+        appearance.accentColor,
+        appearance.spacingScale,
+        appearance.radiusScale
+      )
     };
   }, [appearance]);
 
