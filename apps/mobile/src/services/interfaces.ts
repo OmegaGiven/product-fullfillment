@@ -6,22 +6,55 @@ import type {
   MessageAttempt,
   MessageChannel,
   OcrExtraction,
+  RunId,
   WorkflowRunState,
   WorkflowTemplate
 } from "../domain";
 
 export type IntegrationConnection = {
+  connectionId: string;
+  connectionName: string;
   integrationKey: string;
   integrationName: string;
-  connectedAt: string;
+  description: string;
+  mode: "mock" | "live";
+  connectedAt: string | null;
+  lastSyncedAt: string | null;
+  syncedOrderCount: number;
+  hasStoredCredentials: boolean;
+  fields: IntegrationCredentialField[];
+  usesSecureStorage: boolean;
+};
+
+export type IntegrationDefinition = {
+  integrationKey: string;
+  integrationName: string;
+  description: string;
+  fields: IntegrationCredentialField[];
+};
+
+export type IntegrationCredentialField = {
+  key: string;
+  label: string;
+  placeholder: string;
+  secret: boolean;
+};
+
+export type IntegrationCredentialInput = {
+  connectionId?: string;
+  connectionName: string;
+  integrationKey: string;
+  mode: "mock" | "live";
+  values: Record<string, string>;
 };
 
 export interface StorageService {
   bootstrap(): Promise<void>;
   listRuns(): Promise<FulfillmentRun[]>;
-  getRunState(runId: string): Promise<WorkflowRunState | null>;
+  getRunState(runId: RunId): Promise<WorkflowRunState | null>;
   saveRunState(state: WorkflowRunState): Promise<void>;
   listOrders(): Promise<ImportedOrder[]>;
+  replaceOrders(orders: ImportedOrder[]): Promise<void>;
   saveOrders(orders: ImportedOrder[]): Promise<void>;
   getWorkflowTemplate(templateId: string): Promise<WorkflowTemplate | null>;
   saveWorkflowTemplate(template: WorkflowTemplate): Promise<void>;
@@ -30,31 +63,36 @@ export interface StorageService {
 export interface WorkflowService {
   getDefaultWorkflow(): Promise<WorkflowTemplate>;
   createFulfillmentRun(): Promise<FulfillmentRun>;
-  getRunState(runId: string): Promise<WorkflowRunState | null>;
+  getRunState(runId: RunId): Promise<WorkflowRunState | null>;
   saveRunState(state: WorkflowRunState): Promise<void>;
-  advanceStep(runId: string): Promise<WorkflowRunState>;
+  goToPreviousStep(runId: RunId): Promise<WorkflowRunState>;
+  advanceStep(runId: RunId): Promise<WorkflowRunState>;
 }
 
 export interface OrderSyncService {
-  syncOrders(): Promise<ImportedOrder[]>;
+  syncOrders(connectionId?: string): Promise<ImportedOrder[]>;
 }
 
 export interface OcrService {
-  runOcr(runId: string): Promise<OcrExtraction>;
+  runOcr(runId: RunId): Promise<OcrExtraction>;
 }
 
 export interface MatchService {
-  findMatchCandidates(runId: string): Promise<MatchCandidate[]>;
-  confirmMatchedOrder(runId: string, orderId: string): Promise<WorkflowRunState>;
+  findMatchCandidates(runId: RunId): Promise<MatchCandidate[]>;
+  confirmMatchedOrder(runId: RunId, orderId: string): Promise<WorkflowRunState>;
 }
 
 export interface MessageService {
-  generateMessagePreview(runId: string): Promise<MessageAttempt>;
-  approveAndSend(runId: string, channel: MessageChannel): Promise<WorkflowRunState>;
+  generateMessagePreview(runId: RunId): Promise<MessageAttempt>;
+  approveAndSend(runId: RunId, channel: MessageChannel): Promise<WorkflowRunState>;
 }
 
 export interface IntegrationAuthService {
   listConnections(): Promise<IntegrationConnection[]>;
+  listIntegrationCatalog(): Promise<IntegrationDefinition[]>;
+  saveCredentials(input: IntegrationCredentialInput): Promise<IntegrationConnection>;
+  removeCredentials(connectionId: string): Promise<void>;
+  recordSyncResult(connectionId: string, syncedOrderCount: number): Promise<void>;
 }
 
 export interface AppServices {

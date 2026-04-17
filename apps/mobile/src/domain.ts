@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+export const runIdSchema = z.union([z.number().int().positive(), z.string()]);
+export type RunId = z.infer<typeof runIdSchema>;
+
 export const executionModeSchema = z.enum(["local", "remote"]);
 export type ExecutionMode = z.infer<typeof executionModeSchema>;
 
@@ -31,6 +34,8 @@ export type Address = z.infer<typeof addressSchema>;
 
 export const importedOrderSchema = z.object({
   id: z.string(),
+  integrationConnectionId: z.string().optional(),
+  integrationConnectionName: z.string().optional(),
   integrationKey: z.string(),
   integrationName: z.string(),
   orderNumber: z.string(),
@@ -44,7 +49,7 @@ export type ImportedOrder = z.infer<typeof importedOrderSchema>;
 
 export const fulfillmentPhotoSchema = z.object({
   id: z.string(),
-  runId: z.string(),
+  runId: runIdSchema,
   uri: z.string(),
   label: z.enum(["product", "label"]),
   createdAt: z.string()
@@ -52,7 +57,8 @@ export const fulfillmentPhotoSchema = z.object({
 export type FulfillmentPhoto = z.infer<typeof fulfillmentPhotoSchema>;
 
 export const ocrExtractionSchema = z.object({
-  runId: z.string(),
+  runId: runIdSchema,
+  sourcePhotoId: z.string().optional(),
   text: z.string(),
   recipient: addressSchema.partial(),
   confidence: z.number()
@@ -76,7 +82,7 @@ export type MessageTemplate = z.infer<typeof messageTemplateSchema>;
 
 export const messageAttemptSchema = z.object({
   id: z.string(),
-  runId: z.string(),
+  runId: runIdSchema,
   channel: messageChannelSchema,
   status: z.enum(["pending", "approved", "sent", "blocked"]),
   subject: z.string(),
@@ -106,7 +112,7 @@ export const workflowTemplateSchema = z.object({
 export type WorkflowTemplate = z.infer<typeof workflowTemplateSchema>;
 
 export const approvalRecordSchema = z.object({
-  runId: z.string(),
+  runId: runIdSchema,
   approvedAt: z.string().nullable(),
   approvedBy: z.string().nullable()
 });
@@ -120,7 +126,7 @@ export const workflowRunStepStateSchema = z.object({
 export type WorkflowRunStepState = z.infer<typeof workflowRunStepStateSchema>;
 
 export const fulfillmentRunSchema = z.object({
-  id: z.string(),
+  id: runIdSchema,
   name: z.string(),
   executionMode: executionModeSchema,
   workflowTemplateId: z.string(),

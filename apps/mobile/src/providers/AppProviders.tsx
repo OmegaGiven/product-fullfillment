@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, useContext, useState, type PropsWithChildren } from "react";
 
+import { AppearanceProvider } from "./AppearanceProvider";
 import type { AppServices } from "../services/interfaces";
 import { createLocalServices } from "../services/local/localServices";
 
@@ -12,7 +13,9 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ServicesContext.Provider value={services}>{children}</ServicesContext.Provider>
+      <AppearanceProvider>
+        <ServicesContext.Provider value={services}>{children}</ServicesContext.Provider>
+      </AppearanceProvider>
     </QueryClientProvider>
   );
 }

@@ -10,14 +10,15 @@ import { LocalWorkflowService } from "./localWorkflowService";
 
 export function createLocalServices(): AppServices {
   const storageService = new LocalStorageService();
+  const integrationAuthService = new LocalIntegrationAuthService();
 
   return {
     storageService,
     workflowService: new LocalWorkflowService(storageService),
-    orderSyncService: new LocalOrderSyncService(storageService),
+    orderSyncService: new LocalOrderSyncService(storageService, integrationAuthService),
     ocrService: new LocalOcrService(storageService),
     matchService: new LocalMatchService(storageService),
     messageService: new LocalMessageService(storageService),
-    integrationAuthService: new LocalIntegrationAuthService()
+    integrationAuthService
   };
 }

@@ -1,7 +1,7 @@
-import type { WorkflowRunState } from "../../domain";
+import type { RunId, WorkflowRunState } from "../../domain";
 import type { WorkflowService } from "../interfaces";
 import { DEFAULT_WORKFLOW_TEMPLATE } from "../../workflow/defaultWorkflow";
-import { clamp, createId, nowIso } from "../../utils";
+import { clamp, nowIso } from "../../utils";
 
 import type { LocalStorageService } from "./localStorageService";
 
@@ -16,6 +16,15 @@ function buildInitialStepStates(stepOrder: string[]) {
 export class LocalWorkflowService implements WorkflowService {
   constructor(private storageService: LocalStorageService) {}
 
+  private async createRunId() {
+    const runs = await this.storageService.listRuns();
+    const numericIds = runs
+      .map((run) => (typeof run.id === "number" ? run.id : null))
+      .filter((value): value is number => value !== null);
+
+    return (numericIds.length === 0 ? 0 : Math.max(...numericIds)) + 1;
+  }
+
   async getDefaultWorkflow() {
     const workflow = await this.storageService.getWorkflowTemplate(DEFAULT_WORKFLOW_TEMPLATE.id);
     return workflow ?? DEFAULT_WORKFLOW_TEMPLATE;
@@ -24,8 +33,9 @@ export class LocalWorkflowService implements WorkflowService {
   async createFulfillmentRun() {
     const workflow = await this.getDefaultWorkflow();
     const timestamp = nowIso();
+    const runId = await this.createRunId();
     const run = {
-      id: createId("run"),
+      id: runId,
       name: `Fulfillment ${new Date().toLocaleString()}`,
       executionMode: workflow.executionMode,
       workflowTemplateId: workflow.id,
@@ -56,7 +66,7 @@ export class LocalWorkflowService implements WorkflowService {
     return run;
   }
 
-  async getRunState(runId: string) {
+  async getRunState(runId: RunId) {
     return this.storageService.getRunState(runId);
   }
 
@@ -70,7 +80,39 @@ export class LocalWorkflowService implements WorkflowService {
     });
   }
 
-  async advanceStep(runId: string) {
+  async goToPreviousStep(runId: RunId) {
+    const state = await this.storageService.getRunState(runId);
+    if (!state) {
+      throw new Error("Fulfillment run not found.");
+    }
+
+    const previousIndex = clamp(state.run.currentStepIndex - 1, 0, state.run.stepOrder.length - 1);
+    const stepStates = state.stepStates.map((stepState, index) => {
+      if (index < previousIndex) {
+        return { ...stepState, status: "completed" as const };
+      }
+      if (index === previousIndex) {
+        return { ...stepState, status: "ready" as const };
+      }
+      return { ...stepState, status: "locked" as const };
+    });
+
+    const updatedState: WorkflowRunState = {
+      ...state,
+      run: {
+        ...state.run,
+        currentStepIndex: previousIndex,
+        status: previousIndex === 0 ? "draft" : "in-progress",
+        updatedAt: nowIso()
+      },
+      stepStates
+    };
+
+    await this.storageService.saveRunState(updatedState);
+    return updatedState;
+  }
+
+  async advanceStep(runId: RunId) {
     const state = await this.storageService.getRunState(runId);
     if (!state) {
       throw new Error("Fulfillment run not found.");

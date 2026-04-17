@@ -43,6 +43,11 @@ export async function listRecords(namespace: string) {
   return results.map((row) => row.payload);
 }
 
+export async function deleteRecords(namespace: string) {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM app_records WHERE namespace = ?;`, [namespace]);
+}
+
 async function getDb() {
   if (!databasePromise) {
     databasePromise = SQLite.openDatabaseAsync(DATABASE_NAME);

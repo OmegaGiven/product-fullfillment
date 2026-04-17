@@ -41,6 +41,10 @@ export const seededOrders: ImportedOrder[] = [
   }
 ];
 
+export function getSeededOrdersForIntegration(integrationKey: string) {
+  return seededOrders.filter((order) => order.integrationKey === integrationKey);
+}
+
 export const seededTemplates: MessageTemplate[] = [
   {
     id: "template_default",

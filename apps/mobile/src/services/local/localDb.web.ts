@@ -54,3 +54,7 @@ export async function listRecords(namespace: string) {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map((record) => record.payload);
 }
+
+export async function deleteRecords(namespace: string) {
+  writeNamespace(namespace, []);
+}

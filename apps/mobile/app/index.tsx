@@ -1,19 +1,29 @@
 import { useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppNav } from "../src/components/AppNav";
 import { useBootstrapApp } from "../src/hooks/useBootstrapApp";
 import { useFulfillmentRuns } from "../src/hooks/useFulfillmentRuns";
-import { colors, spacing } from "../src/theme";
+import { useAppTheme } from "../src/providers/AppearanceProvider";
+import { spacing, type AppTheme } from "../src/theme";
 
 export default function HomeScreen() {
   const router = useRouter();
+  const {
+    theme: { colors }
+  } = useAppTheme();
+  const styles = createStyles(colors);
   const { isReady, error } = useBootstrapApp();
   const { runs, createRun } = useFulfillmentRuns();
+  const activeRuns = runs.filter((run) => run.status !== "completed").length;
+  const completedRuns = runs.filter((run) => run.status === "completed").length;
 
   if (!isReady) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.title}>Preparing local workspace...</Text>
+        <View style={styles.loadingCard}>
+          <Text style={styles.loadingTitle}>Preparing local fulfillment tools...</Text>
+        </View>
       </View>
     );
   }
@@ -21,58 +31,90 @@ export default function HomeScreen() {
   if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.title}>App bootstrap failed</Text>
-        <Text style={styles.body}>{error.message}</Text>
+        <View style={styles.errorCard}>
+          <Text style={styles.loadingTitle}>App bootstrap failed</Text>
+          <Text style={styles.body}>{error.message}</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.eyebrow}>Product Fulfillment V1</Text>
-      <Text style={styles.title}>Phone-first, local-first packing workflow</Text>
-      <Text style={styles.body}>
-        Start a fulfillment run, capture photos, match the label to an order,
-        review the outgoing message, and approve the send.
-      </Text>
+    <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <AppNav title="Home" active="home" />
 
-      <Pressable
-        onPress={async () => {
-          const run = await createRun();
-          router.push(`/runs/${run.id}`);
-        }}
-        style={styles.primaryButton}
-      >
-        <Text style={styles.primaryButtonText}>Start New Fulfillment</Text>
-      </Pressable>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Saved Runs</Text>
-        {runs.length === 0 ? (
-          <Text style={styles.body}>No fulfillment runs yet.</Text>
-        ) : (
-          runs.map((run) => (
-            <Pressable
-              key={run.id}
-              onPress={() => router.push(`/runs/${run.id}`)}
-              style={styles.card}
-            >
-              <Text style={styles.cardTitle}>{run.name}</Text>
-              <Text style={styles.cardMeta}>
-                Step {run.currentStepIndex + 1} of {run.stepOrder.length}
-              </Text>
-              <Text style={styles.cardMeta}>
-                Status: {run.status} | Mode: {run.executionMode}
-              </Text>
-            </Pressable>
-          ))
-        )}
+      <View style={styles.heroCard}>
+        <View style={styles.heroActions}>
+          <Pressable
+            onPress={async () => {
+              const run = await createRun();
+              router.push(`/runs/${run.id}`);
+            }}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>Start New Fulfillment</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/orders")} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>View Orders</Text>
+          </Pressable>
+        </View>
       </View>
+
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabel}>All Runs</Text>
+          <Text style={styles.statValue}>{runs.length}</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabel}>Active</Text>
+          <Text style={styles.statValue}>{activeRuns}</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabel}>Completed</Text>
+          <Text style={styles.statValue}>{completedRuns}</Text>
+        </View>
+      </View>
+
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Saved Runs</Text>
+      </View>
+
+      {runs.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>No fulfillment runs yet</Text>
+          <Text style={styles.body}>Create the first run to test the capture, OCR, and confirmation flow.</Text>
+        </View>
+      ) : (
+        runs.map((run) => (
+          <Pressable
+            key={run.id}
+            onPress={() => router.push(`/runs/${run.id}`)}
+            style={styles.runCard}
+          >
+            <View style={styles.runCardTop}>
+              <Text style={styles.cardTitle}>{run.name}</Text>
+              <View
+                style={[
+                  styles.statusPill,
+                  run.status === "completed" ? styles.statusPillCompleted : styles.statusPillActive
+                ]}
+              >
+                <Text style={styles.statusPillText}>{run.status}</Text>
+              </View>
+            </View>
+            <Text style={styles.cardMeta}>
+              Step {run.currentStepIndex + 1} of {run.stepOrder.length}
+            </Text>
+            <Text style={styles.cardMeta}>Execution mode: {run.executionMode}</Text>
+          </Pressable>
+        ))
+      )}
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppTheme["colors"]) {
+return StyleSheet.create({
   container: {
     backgroundColor: colors.background,
     flexGrow: 1,
@@ -86,18 +128,47 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: spacing.xl
   },
-  eyebrow: {
-    color: colors.muted,
-    fontSize: 14,
+  loadingCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 28,
+    borderWidth: 1,
+    gap: spacing.sm,
+    maxWidth: 420,
+    padding: spacing.xl
+  },
+  errorCard: {
+    backgroundColor: colors.dangerSoft,
+    borderColor: colors.danger,
+    borderRadius: 28,
+    borderWidth: 1,
+    gap: spacing.sm,
+    maxWidth: 420,
+    padding: spacing.xl
+  },
+  loadingTitle: {
+    color: colors.text,
+    fontSize: 28,
     fontWeight: "700",
-    letterSpacing: 1.2,
-    textTransform: "uppercase"
+    lineHeight: 34
+  },
+  heroCard: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 30,
+    gap: spacing.md,
+    overflow: "hidden",
+    padding: spacing.xl
+  },
+  heroActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
   },
   title: {
-    color: colors.text,
-    fontSize: 30,
+    color: colors.surfaceRaised,
+    fontSize: 32,
     fontWeight: "700",
-    lineHeight: 36
+    lineHeight: 38
   },
   body: {
     color: colors.text,
@@ -105,39 +176,119 @@ const styles = StyleSheet.create({
     lineHeight: 24
   },
   primaryButton: {
-    backgroundColor: colors.primary,
+    alignSelf: "flex-start",
+    backgroundColor: colors.accent,
     borderRadius: 18,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md
   },
   primaryButtonText: {
-    color: colors.surface,
+    color: colors.surfaceRaised,
     fontSize: 16,
     fontWeight: "700"
   },
-  section: {
-    gap: spacing.md
+  secondaryButton: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.borderStrong,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md
+  },
+  secondaryButtonText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  statsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  statCard: {
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    flexGrow: 1,
+    gap: spacing.xs,
+    minWidth: 96,
+    padding: spacing.lg
+  },
+  statLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    textTransform: "uppercase"
+  },
+  statValue: {
+    color: colors.text,
+    fontSize: 30,
+    fontWeight: "700"
+  },
+  sectionHeader: {
+    gap: spacing.xs
   },
   sectionTitle: {
     color: colors.text,
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "700"
   },
-  card: {
-    backgroundColor: colors.surface,
+  emptyCard: {
+    backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderRadius: 18,
+    borderRadius: 24,
     borderWidth: 1,
-    gap: spacing.xs,
+    gap: spacing.sm,
+    padding: spacing.xl
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "700"
+  },
+  runCard: {
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    gap: spacing.sm,
     padding: spacing.lg
+  },
+  runCardTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.md,
+    justifyContent: "space-between"
   },
   cardTitle: {
     color: colors.text,
+    flex: 1,
     fontSize: 18,
     fontWeight: "700"
   },
   cardMeta: {
     color: colors.muted,
     fontSize: 14
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  statusPillActive: {
+    backgroundColor: colors.accentSoft
+  },
+  statusPillCompleted: {
+    backgroundColor: "#dff1e4"
+  },
+  statusPillText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "capitalize"
   }
 });
+}

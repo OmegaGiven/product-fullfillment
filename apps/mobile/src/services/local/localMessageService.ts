@@ -1,5 +1,6 @@
 import * as MailComposer from "expo-mail-composer";
 
+import type { RunId } from "../../domain";
 import type { MessageService } from "../interfaces";
 import { createId, nowIso } from "../../utils";
 
@@ -8,7 +9,7 @@ import { seededTemplates } from "./seedData";
 
 function fillTemplate(templateBody: string, values: Record<string, string>) {
   return Object.entries(values).reduce(
-    (body, [key, value]) => body.replaceAll(`{{${key}}}`, value),
+    (body, [key, value]) => body.split(`{{${key}}}`).join(value),
     templateBody
   );
 }
@@ -16,7 +17,7 @@ function fillTemplate(templateBody: string, values: Record<string, string>) {
 export class LocalMessageService implements MessageService {
   constructor(private storageService: LocalStorageService) {}
 
-  async generateMessagePreview(runId: string) {
+  async generateMessagePreview(runId: RunId) {
     const state = await this.storageService.getRunState(runId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
@@ -66,7 +67,7 @@ export class LocalMessageService implements MessageService {
     return preview;
   }
 
-  async approveAndSend(runId: string, channel: "integration-message" | "email" | "manual") {
+  async approveAndSend(runId: RunId, channel: "integration-message" | "email" | "manual") {
     const state = await this.storageService.getRunState(runId);
     if (!state || !state.previewMessage) {
       throw new Error("Generate a preview before sending.");
