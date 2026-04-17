@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { ImportedOrder, RunId } from "../domain";
+import type { FulfillmentId, ImportedOrder } from "../domain";
 import { useServices } from "../providers/AppProviders";
 
 export type EnrichedOrder = ImportedOrder & {
-  linkedRunId: RunId | null;
+  linkedFulfillmentId: FulfillmentId | null;
 };
 
 export function useOrders() {
@@ -16,14 +16,16 @@ export function useOrders() {
     setIsLoading(true);
     const [nextOrders, links] = await Promise.all([
       storageService.listOrders(),
-      storageService.listOrderRunLinks()
+      storageService.listOrderFulfillmentLinks()
     ]);
-    const linkedRunIdByOrderId = new Map(links.map((link) => [link.orderId, link.runId]));
+    const linkedFulfillmentIdByOrderId = new Map(
+      links.map((link) => [link.orderId, link.fulfillmentId])
+    );
     setOrders(
       nextOrders
         .map((order) => ({
           ...order,
-          linkedRunId: linkedRunIdByOrderId.get(order.id) ?? null
+          linkedFulfillmentId: linkedFulfillmentIdByOrderId.get(order.id) ?? null
         }))
         .sort(
         (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()

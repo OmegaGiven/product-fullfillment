@@ -2,28 +2,28 @@ import { useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppNav } from "../../src/components/AppNav";
-import type { RunId } from "../../src/domain";
+import type { FulfillmentId } from "../../src/domain";
 import { useAppTheme } from "../../src/providers/AppearanceProvider";
 import { useFulfillmentRun } from "../../src/hooks/useFulfillmentRun";
 import type { AppTheme } from "../../src/theme";
 import { WorkflowScreen } from "../../src/workflow/WorkflowScreen";
 
-function normalizeRunId(value?: string | string[]): RunId | undefined {
+function normalizeFulfillmentId(value?: string | string[]): FulfillmentId | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   if (!raw) {
     return undefined;
   }
 
-  return /^\d+$/.test(raw) ? Number(raw) : raw;
+  return Number(raw);
 }
 
 export default function FulfillmentRunScreen() {
   const { theme } = useAppTheme();
   const { colors } = theme;
   const styles = createStyles(theme);
-  const params = useLocalSearchParams<{ runId: string }>();
-  const runId = normalizeRunId(params.runId);
-  const { run, workflow, isLoading, refresh } = useFulfillmentRun(runId);
+  const params = useLocalSearchParams<{ fulfillmentId: string }>();
+  const fulfillmentId = normalizeFulfillmentId(params.fulfillmentId);
+  const { run, workflow, isLoading, refresh } = useFulfillmentRun(fulfillmentId);
 
   if (isLoading || !run || !workflow) {
     return (

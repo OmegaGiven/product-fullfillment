@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { FulfillmentRun } from "../domain";
+import type { FulfillmentRun, RecordId } from "../domain";
 import { useServices } from "../providers/AppProviders";
 
 export function useFulfillmentRuns() {
@@ -15,14 +15,14 @@ export function useFulfillmentRuns() {
     void refresh();
   }, [refresh]);
 
-  const createRun = useCallback(async (templateId?: string) => {
+  const createRun = useCallback(async (templateId?: RecordId) => {
     const run = await workflowService.createFulfillmentRun(templateId);
     await refresh();
     return run;
   }, [refresh, workflowService]);
 
-  const deleteRun = useCallback(async (runId: FulfillmentRun["id"]) => {
-    await workflowService.deleteFulfillmentRun(runId);
+  const deleteRun = useCallback(async (fulfillmentId: FulfillmentRun["id"]) => {
+    await workflowService.deleteFulfillmentRun(fulfillmentId);
     await refresh();
   }, [refresh, workflowService]);
 

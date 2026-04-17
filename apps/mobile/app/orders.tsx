@@ -65,7 +65,7 @@ function buildOrderExportCsv(orders: EnrichedOrder[]) {
     formatAddress(order),
     order.availableChannels.join(", "),
     order.createdAt,
-    order.linkedRunId ?? ""
+    order.linkedFulfillmentId ?? ""
   ]);
 
   return [header, ...rows]
@@ -93,6 +93,22 @@ export default function OrdersScreen() {
     address: "",
     channels: "",
     created: ""
+  });
+  const [sortState, setSortState] = useState<{
+    key:
+      | "order"
+      | "store"
+      | "platform"
+      | "buyer"
+      | "address"
+      | "channels"
+      | "created"
+      | "fulfillmentId"
+      | null;
+    direction: "asc" | "desc" | null;
+  }>({
+    key: null,
+    direction: null
   });
 
   useEffect(() => {
@@ -130,7 +146,86 @@ export default function OrdersScreen() {
     );
   });
 
-  async function handleSync(connectionId?: string) {
+  const sortedOrders = [...filteredOrders].sort((left, right) => {
+    if (!sortState.key || !sortState.direction) {
+      return 0;
+    }
+
+    const directionFactor = sortState.direction === "asc" ? 1 : -1;
+
+    switch (sortState.key) {
+      case "order":
+        return (left.id - right.id) * directionFactor;
+      case "store":
+        return (left.integrationConnectionName ?? "").localeCompare(
+          right.integrationConnectionName ?? ""
+        ) * directionFactor;
+      case "platform":
+        return left.integrationName.localeCompare(right.integrationName) * directionFactor;
+      case "buyer":
+        return left.buyerName.localeCompare(right.buyerName) * directionFactor;
+      case "address":
+        return formatAddress(left).localeCompare(formatAddress(right)) * directionFactor;
+      case "channels":
+        return left.availableChannels.join(", ").localeCompare(
+          right.availableChannels.join(", ")
+        ) * directionFactor;
+      case "created":
+        return (new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()) * directionFactor;
+      case "fulfillmentId":
+        return ((left.linkedFulfillmentId ?? -1) - (right.linkedFulfillmentId ?? -1)) * directionFactor;
+      default:
+        return 0;
+    }
+  });
+
+  function toggleSort(
+    key:
+      | "order"
+      | "store"
+      | "platform"
+      | "buyer"
+      | "address"
+      | "channels"
+      | "created"
+      | "fulfillmentId"
+  ) {
+    setSortState((current) => {
+      if (current.key !== key) {
+        return { key, direction: "asc" };
+      }
+
+      if (current.direction === "asc") {
+        return { key, direction: "desc" };
+      }
+
+      if (current.direction === "desc") {
+        return { key: null, direction: null };
+      }
+
+      return { key, direction: "asc" };
+    });
+  }
+
+  function getSortArrow(
+    key:
+      | "order"
+      | "store"
+      | "platform"
+      | "buyer"
+      | "address"
+      | "channels"
+      | "created"
+      | "fulfillmentId"
+  ) {
+    if (sortState.key !== key || !sortState.direction) {
+      return "";
+    }
+
+    return sortState.direction === "asc" ? " ↑" : " ↓";
+  }
+
+  async function handleSync(connectionId?: number) {
     setIsSyncing(true);
     setError(null);
     try {
@@ -263,16 +358,65 @@ export default function OrdersScreen() {
         >
           <View style={styles.tableInner}>
             <View style={[styles.tableRow, styles.tableHeaderRow]}>
-              <Text style={[styles.tableCell, styles.cellStore, styles.tableHeaderText]}>Store</Text>
-              <Text style={[styles.tableCell, styles.cellPlatform, styles.tableHeaderText]}>Platform</Text>
-              <Text style={[styles.tableCell, styles.cellOrder, styles.tableHeaderText]}>Order</Text>
-              <Text style={[styles.tableCell, styles.cellBuyer, styles.tableHeaderText]}>Buyer</Text>
-              <Text style={[styles.tableCell, styles.cellAddress, styles.tableHeaderText]}>Ship To</Text>
-              <Text style={[styles.tableCell, styles.cellChannels, styles.tableHeaderText]}>Channels</Text>
-              <Text style={[styles.tableCell, styles.cellDate, styles.tableHeaderText]}>Created</Text>
-              <Text style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderText]}>Workflow</Text>
+              <Pressable
+                onPress={() => toggleSort("order")}
+                style={[styles.tableCell, styles.cellOrder, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Order ID{getSortArrow("order")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("store")}
+                style={[styles.tableCell, styles.cellStore, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Store{getSortArrow("store")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("platform")}
+                style={[styles.tableCell, styles.cellPlatform, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Platform{getSortArrow("platform")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("buyer")}
+                style={[styles.tableCell, styles.cellBuyer, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Buyer{getSortArrow("buyer")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("address")}
+                style={[styles.tableCell, styles.cellAddress, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Ship To{getSortArrow("address")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("channels")}
+                style={[styles.tableCell, styles.cellChannels, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Channels{getSortArrow("channels")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("created")}
+                style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Created{getSortArrow("created")}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleSort("fulfillmentId")}
+                style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderCell]}
+              >
+                <Text style={styles.tableHeaderText}>Fulfillment ID{getSortArrow("fulfillmentId")}</Text>
+              </Pressable>
             </View>
             <View style={[styles.tableRow, styles.tableFilterRow]}>
+              <View style={[styles.tableCell, styles.cellOrder]}>
+                <TextInput
+                  onChangeText={(value) => setFilters((current) => ({ ...current, order: value }))}
+                  placeholder="Filter"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                  value={filters.order}
+                />
+              </View>
               <View style={[styles.tableCell, styles.cellStore]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, store: value }))}
@@ -289,15 +433,6 @@ export default function OrdersScreen() {
                   placeholderTextColor={colors.muted}
                   style={styles.filterInput}
                   value={filters.platform}
-                />
-              </View>
-              <View style={[styles.tableCell, styles.cellOrder]}>
-                <TextInput
-                  onChangeText={(value) => setFilters((current) => ({ ...current, order: value }))}
-                  placeholder="Filter"
-                  placeholderTextColor={colors.muted}
-                  style={styles.filterInput}
-                  value={filters.order}
                 />
               </View>
               <View style={[styles.tableCell, styles.cellBuyer]}>
@@ -339,7 +474,7 @@ export default function OrdersScreen() {
               <View style={[styles.tableCell, styles.cellWorkflow]} />
             </View>
 
-            {filteredOrders.length === 0 && !isLoading ? (
+            {sortedOrders.length === 0 && !isLoading ? (
               <View style={styles.emptyRow}>
                 <Text style={styles.emptyTitle}>
                   {orders.length === 0 ? "No stored orders yet" : "No orders match the current filters"}
@@ -352,16 +487,19 @@ export default function OrdersScreen() {
               </View>
             ) : null}
 
-            {filteredOrders.map((order, index) => (
+            {sortedOrders.map((order, index) => (
               <View
                 key={order.id}
                 style={[styles.tableRow, index % 2 === 0 ? styles.tableRowAlt : null]}
               >
+                <View style={[styles.tableCell, styles.cellOrder]}>
+                  <Text style={styles.cellPrimaryText}>{order.id}</Text>
+                  <Text style={styles.cellSecondaryText}>{order.orderNumber}</Text>
+                </View>
                 <Text style={[styles.tableCell, styles.cellStore]}>
                   {order.integrationConnectionName ?? "Unlabeled Store"}
                 </Text>
                 <Text style={[styles.tableCell, styles.cellPlatform]}>{order.integrationName}</Text>
-                <Text style={[styles.tableCell, styles.cellOrder]}>{order.orderNumber}</Text>
                 <View style={[styles.tableCell, styles.cellBuyer]}>
                   <Text style={styles.cellPrimaryText}>{order.buyerName}</Text>
                   <Text style={styles.cellSecondaryText}>{order.buyerEmail ?? "No email"}</Text>
@@ -374,12 +512,12 @@ export default function OrdersScreen() {
                   {new Date(order.createdAt).toLocaleDateString()}
                 </Text>
                 <View style={[styles.tableCell, styles.cellWorkflow]}>
-                  {order.linkedRunId ? (
+                  {order.linkedFulfillmentId ? (
                     <Pressable
-                      onPress={() => router.push(`/runs/${order.linkedRunId}`)}
+                      onPress={() => router.push(`/runs/${order.linkedFulfillmentId}`)}
                       style={styles.linkButton}
                     >
-                      <Text style={styles.linkButtonText}>Open #{order.linkedRunId}</Text>
+                      <Text style={styles.linkButtonText}>Open #{order.linkedFulfillmentId}</Text>
                     </Pressable>
                   ) : (
                     <Text style={styles.cellSecondaryText}>No workflow</Text>
@@ -553,10 +691,10 @@ function createStyles(theme: AppTheme) {
       lineHeight: 20
     },
     filterActionsRow: {
-      alignItems: "center",
+      alignItems: "flex-start",
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: spacing.sm,
+      gap: spacing.xs,
       justifyContent: "space-between"
     },
     filterButtons: {
@@ -565,9 +703,10 @@ function createStyles(theme: AppTheme) {
       gap: spacing.sm
     },
     statsRow: {
+      alignItems: "stretch",
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: spacing.sm,
+      gap: spacing.xs,
       justifyContent: "flex-end",
       marginLeft: "auto"
     },
@@ -578,7 +717,7 @@ function createStyles(theme: AppTheme) {
       backgroundColor: colors.accent,
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm
+      paddingVertical: spacing.xs + 2
     },
     exportButtonText: {
       color: colors.surfaceRaised,
@@ -591,7 +730,7 @@ function createStyles(theme: AppTheme) {
       borderRadius: radius.pill,
       borderWidth: 1,
       paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm
+      paddingVertical: spacing.xs + 2
     },
     clearButtonText: {
       color: colors.text,
@@ -603,10 +742,10 @@ function createStyles(theme: AppTheme) {
       borderColor: colors.border,
       borderRadius: radius.lg,
       borderWidth: 1,
-      gap: spacing.xs,
-      minWidth: 110,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm
+      gap: 2,
+      minWidth: 92,
+      paddingHorizontal: spacing.sm + 2,
+      paddingVertical: spacing.xs + 2
     },
     statLabel: {
       color: colors.muted,
@@ -617,7 +756,7 @@ function createStyles(theme: AppTheme) {
     },
     statValue: {
       color: colors.text,
-      fontSize: 20,
+      fontSize: 18,
       fontWeight: "700"
     },
     tableCard: {
@@ -652,6 +791,9 @@ function createStyles(theme: AppTheme) {
       letterSpacing: 0.6,
       textTransform: "uppercase"
     },
+    tableHeaderCell: {
+      justifyContent: "center"
+    },
     tableRowAlt: {
       backgroundColor: colors.surface
     },
@@ -659,9 +801,9 @@ function createStyles(theme: AppTheme) {
       color: colors.text,
       fontSize: 14,
       lineHeight: 20,
-      minHeight: 76,
+      minHeight: 64,
       paddingHorizontal: spacing.md,
-      paddingVertical: spacing.md
+      paddingVertical: spacing.sm
     },
     filterInput: {
       backgroundColor: colors.background,

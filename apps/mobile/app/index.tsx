@@ -63,7 +63,7 @@ export default function HomeScreen() {
 
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
-          <Text style={styles.statLabel}>All Runs</Text>
+          <Text style={styles.statLabel}>Total Fulfillments</Text>
           <Text style={styles.statValue}>{runs.length}</Text>
         </View>
         <View style={styles.statCard}>
@@ -77,7 +77,7 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Saved Runs</Text>
+        <Text style={styles.sectionTitle}>Incomplete Fulfillments</Text>
       </View>
 
       {runs.length === 0 ? (

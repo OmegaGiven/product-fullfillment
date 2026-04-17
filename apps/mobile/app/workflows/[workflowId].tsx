@@ -10,7 +10,7 @@ import { AppNav } from "../../src/components/AppNav";
 import { useAppTheme } from "../../src/providers/AppearanceProvider";
 import { useToast } from "../../src/providers/ToastProvider";
 import type { AppTheme } from "../../src/theme";
-import { createId } from "../../src/utils";
+import { createLocalRecordId } from "../../src/utils";
 import { getDefaultStepPreset, STEP_LIBRARY } from "../../src/workflow/stepLibrary";
 import { cloneTemplate } from "../../src/workflow/workflowBuilder";
 
@@ -28,7 +28,7 @@ const MATCH_COLUMNS = [
 ] as const;
 
 const OCR_TOOLS = ["native-ocr", "web-ocr", "mock-ocr"] as const;
-const CAPTURE_TOOLS = ["camera", "camera-or-upload", "scanner"] as const;
+const CAPTURE_TOOLS = ["camera", "camera-or-upload", "upload"] as const;
 const MESSAGE_TOOLS = ["integration-message", "email", "manual"] as const;
 const API_METHODS = ["GET", "POST", "PUT", "PATCH"] as const;
 
@@ -42,13 +42,21 @@ function cloneStep(step: WorkflowStep): WorkflowStep {
 function coerceTemplate(template: WorkflowTemplate) {
   return {
     ...cloneTemplate(template),
+    steps: template.steps.map((step) => ({
+      ...step,
+      config:
+        step.type === "capture-photos" && step.config.captureTool === "scanner"
+          ? { ...step.config, captureTool: "upload" }
+          : { ...step.config }
+    })),
     stepOrder: [...template.steps.map((step) => step.id)]
   };
 }
 
 export default function WorkflowDetailScreen() {
   const params = useLocalSearchParams<{ workflowId: string }>();
-  const workflowId = Array.isArray(params.workflowId) ? params.workflowId[0] : params.workflowId;
+  const workflowIdValue = Array.isArray(params.workflowId) ? params.workflowId[0] : params.workflowId;
+  const workflowId = workflowIdValue ? Number(workflowIdValue) : undefined;
   const { theme } = useAppTheme();
   const { showToast } = useToast();
   const { colors } = theme;
@@ -63,6 +71,11 @@ export default function WorkflowDetailScreen() {
   const [draft, setDraft] = useState<WorkflowTemplate | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [openModuleTypeStepId, setOpenModuleTypeStepId] = useState<string | null>(null);
+  const [openInsertMenu, setOpenInsertMenu] = useState<{
+    stepId: string;
+    placement: "above" | "below";
+  } | null>(null);
 
   useEffect(() => {
     if (sourceTemplate) {
@@ -128,13 +141,20 @@ export default function WorkflowDetailScreen() {
         };
       })
     }));
+    setOpenModuleTypeStepId(null);
   }
 
-  function addStep(type: StepType) {
+  function addStep(
+    type: StepType,
+    options?: {
+      referenceStepId?: string;
+      placement?: "above" | "below";
+    }
+  ) {
     updateDraft((current) => {
       const preset = getDefaultStepPreset(type);
       const step: WorkflowStep = {
-        id: createId("step"),
+        id: `step_${createLocalRecordId()}`,
         type,
         title: preset.title,
         description: preset.description,
@@ -142,12 +162,38 @@ export default function WorkflowDetailScreen() {
         optional: false,
         config: { ...(preset.config ?? {}) }
       };
+
+      if (!options?.referenceStepId) {
+        return {
+          ...current,
+          steps: [...current.steps, step],
+          stepOrder: [...current.stepOrder, step.id]
+        };
+      }
+
+      const referenceIndex = current.steps.findIndex(
+        (existingStep) => existingStep.id === options.referenceStepId
+      );
+      if (referenceIndex < 0) {
+        return {
+          ...current,
+          steps: [...current.steps, step],
+          stepOrder: [...current.stepOrder, step.id]
+        };
+      }
+
+      const insertIndex =
+        options.placement === "above" ? referenceIndex : referenceIndex + 1;
+      const nextSteps = [...current.steps];
+      nextSteps.splice(insertIndex, 0, step);
+
       return {
         ...current,
-        steps: [...current.steps, step],
-        stepOrder: [...current.stepOrder, step.id]
+        steps: nextSteps,
+        stepOrder: nextSteps.map((item) => item.id)
       };
     });
+    setOpenInsertMenu(null);
   }
 
   async function handleSave() {
@@ -202,9 +248,8 @@ export default function WorkflowDetailScreen() {
       ) : null}
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Workflow Details</Text>
+        <Text style={styles.cardTitle}>Workflow Name</Text>
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Workflow Name</Text>
           <TextInput
             value={draft.name}
             onChangeText={(value) => updateDraft((current) => ({ ...current, name: value }))}
@@ -218,27 +263,72 @@ export default function WorkflowDetailScreen() {
       {draft.steps.map((step, index) => (
         <View key={step.id} style={styles.card}>
           <View style={styles.stepHeader}>
-            <Text style={styles.cardTitle}>Step {index + 1}</Text>
-            <Text style={styles.stepMeta}>{step.type}</Text>
+            <View style={styles.stepHeaderInfo}>
+              <Text style={styles.cardTitle}>Step {index + 1}</Text>
+              <Text style={styles.stepMeta}>{step.type}</Text>
+            </View>
+            <View style={styles.stepActionRow}>
+              <Pressable
+                onPress={() => moveStep(step.id, -1)}
+                style={styles.secondaryButton}
+                disabled={index === 0}
+              >
+                <Text style={styles.secondaryButtonText}>Move Up</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => moveStep(step.id, 1)}
+                style={styles.secondaryButton}
+                disabled={index === draft.steps.length - 1}
+              >
+                <Text style={styles.secondaryButtonText}>Move Down</Text>
+              </Pressable>
+              <Pressable onPress={() => removeStep(step.id)} style={styles.ghostButton}>
+                <Text style={styles.ghostButtonText}>Remove</Text>
+              </Pressable>
+            </View>
           </View>
 
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Module Type</Text>
-            <View style={styles.chipRow}>
-              {STEP_LIBRARY.map((item) => {
-                const isActive = item.type === step.type;
-                return (
-                  <Pressable
-                    key={`${step.id}:${item.type}`}
-                    onPress={() => changeStepType(step.id, item.type)}
-                    style={[styles.choiceChip, isActive ? styles.choiceChipActive : null]}
-                  >
-                    <Text style={[styles.choiceChipText, isActive ? styles.choiceChipTextActive : null]}>
-                      {item.title}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+            <View style={styles.dropdownGroup}>
+              <Pressable
+                onPress={() =>
+                  setOpenModuleTypeStepId((current) => (current === step.id ? null : step.id))
+                }
+                style={styles.dropdownTrigger}
+              >
+                <Text style={styles.dropdownTriggerText}>
+                  {STEP_LIBRARY.find((item) => item.type === step.type)?.title ?? step.type}
+                </Text>
+                <Text style={styles.dropdownChevron}>
+                  {openModuleTypeStepId === step.id ? "▲" : "▼"}
+                </Text>
+              </Pressable>
+
+              {openModuleTypeStepId === step.id ? (
+                <View style={styles.dropdownMenu}>
+                  {STEP_LIBRARY.map((item) => {
+                    const isActive = item.type === step.type;
+                    return (
+                      <Pressable
+                        key={`${step.id}:${item.type}`}
+                        onPress={() => changeStepType(step.id, item.type)}
+                        style={[styles.dropdownOption, isActive ? styles.dropdownOptionActive : null]}
+                      >
+                        <Text
+                          style={[
+                            styles.dropdownOptionTitle,
+                            isActive ? styles.dropdownOptionTitleActive : null
+                          ]}
+                        >
+                          {item.title}
+                        </Text>
+                        <Text style={styles.dropdownOptionMeta}>{item.type}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -247,7 +337,9 @@ export default function WorkflowDetailScreen() {
               <Text style={styles.fieldLabel}>Capture Tool</Text>
               <View style={styles.chipRow}>
                 {CAPTURE_TOOLS.map((tool) => {
-                  const isActive = (step.config.captureTool ?? "camera") === tool;
+                  const selectedCaptureTool =
+                    step.config.captureTool === "scanner" ? "upload" : (step.config.captureTool ?? "camera");
+                  const isActive = selectedCaptureTool === tool;
                   return (
                     <Pressable
                       key={`${step.id}:${tool}`}
@@ -337,7 +429,7 @@ export default function WorkflowDetailScreen() {
             </>
           ) : null}
 
-          {step.type === "preview-message" || step.type === "approve-send" ? (
+          {step.type === "message-customer" || step.type === "approve-send" ? (
             <>
               <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>Messaging Tool</Text>
@@ -495,42 +587,75 @@ export default function WorkflowDetailScreen() {
             </>
           ) : null}
 
-          <View style={styles.stepActionRow}>
+          <View style={styles.insertControlsRow}>
             <Pressable
-              onPress={() => moveStep(step.id, -1)}
+              onPress={() =>
+                setOpenInsertMenu((current) =>
+                  current?.stepId === step.id && current.placement === "above"
+                    ? null
+                    : { stepId: step.id, placement: "above" }
+                )
+              }
               style={styles.secondaryButton}
-              disabled={index === 0}
             >
-              <Text style={styles.secondaryButtonText}>Move Up</Text>
+              <Text style={styles.secondaryButtonText}>Add Above</Text>
             </Pressable>
             <Pressable
-              onPress={() => moveStep(step.id, 1)}
+              onPress={() =>
+                setOpenInsertMenu((current) =>
+                  current?.stepId === step.id && current.placement === "below"
+                    ? null
+                    : { stepId: step.id, placement: "below" }
+                )
+              }
               style={styles.secondaryButton}
-              disabled={index === draft.steps.length - 1}
             >
-              <Text style={styles.secondaryButtonText}>Move Down</Text>
-            </Pressable>
-            <Pressable onPress={() => removeStep(step.id)} style={styles.ghostButton}>
-              <Text style={styles.ghostButtonText}>Remove</Text>
+              <Text style={styles.secondaryButtonText}>Add Below</Text>
             </Pressable>
           </View>
+
+          {openInsertMenu?.stepId === step.id ? (
+            <View style={styles.insertMenuCard}>
+              <Text style={styles.fieldLabel}>
+                Add Module {openInsertMenu.placement === "above" ? "Above" : "Below"} Step {index + 1}
+              </Text>
+              <View style={styles.chipRow}>
+                {STEP_LIBRARY.map((libraryStep) => (
+                  <Pressable
+                    key={`${step.id}:${openInsertMenu.placement}:${libraryStep.type}`}
+                    onPress={() =>
+                      addStep(libraryStep.type, {
+                        referenceStepId: step.id,
+                        placement: openInsertMenu.placement
+                      })
+                    }
+                    style={styles.choiceChip}
+                  >
+                    <Text style={styles.choiceChipText}>{libraryStep.title}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
         </View>
       ))}
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Add Module</Text>
-        <View style={styles.chipRow}>
-          {STEP_LIBRARY.map((step) => (
-            <Pressable
-              key={`add:${step.type}`}
-              onPress={() => addStep(step.type)}
-              style={styles.choiceChip}
-            >
-              <Text style={styles.choiceChipText}>{step.title}</Text>
-            </Pressable>
-          ))}
+      {draft.steps.length === 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Add First Module</Text>
+          <View style={styles.chipRow}>
+            {STEP_LIBRARY.map((step) => (
+              <Pressable
+                key={`add:first:${step.type}`}
+                onPress={() => addStep(step.type)}
+                style={styles.choiceChip}
+              >
+                <Text style={styles.choiceChipText}>{step.title}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
-      </View>
+      ) : null}
 
       <Pressable onPress={handleSave} style={styles.primaryButton} disabled={isSaving}>
         <Text style={styles.primaryButtonText}>{isSaving ? "Saving..." : "Save Workflow"}</Text>
@@ -593,9 +718,16 @@ function createStyles(theme: AppTheme) {
       fontWeight: "700"
     },
     stepHeader: {
-      alignItems: "center",
+      alignItems: "flex-start",
       flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm,
       justifyContent: "space-between"
+    },
+    stepHeaderInfo: {
+      flex: 1,
+      gap: 2,
+      minWidth: 180
     },
     stepMeta: {
       color: colors.muted,
@@ -606,10 +738,66 @@ function createStyles(theme: AppTheme) {
     fieldGroup: {
       gap: spacing.xs
     },
+    dropdownGroup: {
+      gap: spacing.xs
+    },
     fieldLabel: {
       color: colors.text,
       fontSize: 14,
       fontWeight: "700"
+    },
+    dropdownTrigger: {
+      alignItems: "center",
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md
+    },
+    dropdownTriggerText: {
+      color: colors.text,
+      flex: 1,
+      fontSize: 15,
+      fontWeight: "600"
+    },
+    dropdownChevron: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: "700",
+      marginLeft: spacing.sm
+    },
+    dropdownMenu: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      overflow: "hidden"
+    },
+    dropdownOption: {
+      backgroundColor: colors.surfaceRaised,
+      borderTopColor: colors.border,
+      borderTopWidth: 1,
+      gap: 2,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm + 2
+    },
+    dropdownOptionActive: {
+      backgroundColor: colors.accentSoft
+    },
+    dropdownOptionTitle: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700"
+    },
+    dropdownOptionTitleActive: {
+      color: colors.text
+    },
+    dropdownOptionMeta: {
+      color: colors.muted,
+      fontSize: 12
     },
     input: {
       backgroundColor: colors.background,
@@ -658,6 +846,19 @@ function createStyles(theme: AppTheme) {
       gap: spacing.xs,
       padding: spacing.md
     },
+    insertControlsRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    insertMenuCard: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      gap: spacing.sm,
+      padding: spacing.md
+    },
     wipTitle: {
       color: colors.accent,
       fontSize: 14,
@@ -669,6 +870,7 @@ function createStyles(theme: AppTheme) {
       lineHeight: 20
     },
     stepActionRow: {
+      justifyContent: "flex-end",
       flexDirection: "row",
       flexWrap: "wrap",
       gap: spacing.sm

@@ -4,8 +4,8 @@ import { Platform } from "react-native";
 import type {
   Address,
   FulfillmentPhoto,
+  FulfillmentId,
   OcrExtraction,
-  RunId
 } from "../../domain";
 import type { OcrService } from "../interfaces";
 
@@ -264,8 +264,8 @@ async function recognizePhoto(photo: FulfillmentPhoto): Promise<RecognizedPhoto 
 export class LocalOcrService implements OcrService {
   constructor(private storageService: LocalStorageService) {}
 
-  async runOcr(runId: RunId): Promise<OcrExtraction> {
-    const state = await this.storageService.getRunState(runId);
+  async runOcr(fulfillmentId: FulfillmentId): Promise<OcrExtraction> {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -299,7 +299,7 @@ export class LocalOcrService implements OcrService {
 
     const best = recognizedPhotos.sort((a, b) => b.score - a.score)[0];
     const extraction: OcrExtraction = {
-      runId,
+      fulfillmentId,
       sourcePhotoId: best.photo.id,
       text: best.text,
       recipient: best.recipient,

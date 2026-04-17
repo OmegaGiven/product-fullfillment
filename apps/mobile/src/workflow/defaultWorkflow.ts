@@ -1,7 +1,7 @@
 import type { WorkflowTemplate } from "../domain";
 
 export const DEFAULT_WORKFLOW_TEMPLATE: WorkflowTemplate = {
-  id: "workflow_default_v1",
+  id: 1,
   name: "Default Product Fulfillment Workflow",
   executionMode: "local",
   stepOrder: [
@@ -9,9 +9,7 @@ export const DEFAULT_WORKFLOW_TEMPLATE: WorkflowTemplate = {
     "step_capture",
     "step_review_photos",
     "step_ocr_match",
-    "step_confirm_order",
-    "step_preview_message",
-    "step_approve_send"
+    "step_preview_message"
   ],
   steps: [
     {
@@ -47,35 +45,17 @@ export const DEFAULT_WORKFLOW_TEMPLATE: WorkflowTemplate = {
     {
       id: "step_ocr_match",
       type: "ocr-match",
-      title: "Run OCR And Order Matching",
-      description: "Extract recipient data from the label and rank matching orders.",
-      required: true,
-      optional: false,
-      config: {}
-    },
-    {
-      id: "step_confirm_order",
-      type: "confirm-order",
-      title: "Confirm Matched Order",
-      description: "Require human approval of the best match before messaging.",
+      title: "Run OCR, Review, And Confirm Match",
+      description: "Extract recipient data from the label, review candidates, and confirm the matched order.",
       required: true,
       optional: false,
       config: {}
     },
     {
       id: "step_preview_message",
-      type: "preview-message",
-      title: "Preview Message",
-      description: "Render the best channel and message content for review.",
-      required: true,
-      optional: false,
-      config: {}
-    },
-    {
-      id: "step_approve_send",
-      type: "approve-send",
-      title: "Approve And Send",
-      description: "Approve the final message and send through the selected channel.",
+      type: "message-customer",
+      title: "Message Customer",
+      description: "Review the generated customer message and send it through the selected channel.",
       required: true,
       optional: false,
       config: {}

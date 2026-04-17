@@ -3,7 +3,11 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 
 import { AppNav } from "../src/components/AppNav";
 import { useToast } from "../src/providers/ToastProvider";
-import type { IntegrationConnection, IntegrationDefinition } from "../src/services/interfaces";
+import type {
+  IntegrationConnection,
+  IntegrationDefinition,
+  PreparedIntegrationOAuth
+} from "../src/services/interfaces";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
 import { useServices } from "../src/providers/AppProviders";
 import type { AppTheme } from "../src/theme";
@@ -18,8 +22,14 @@ const FALLBACK_INTEGRATION_CATALOG: IntegrationDefinition[] = [
     integrationName: "Etsy",
     description: "",
     fields: [
-      { key: "apiKey", label: "API Key", placeholder: "Enter Etsy API key", secret: true },
-      { key: "shopId", label: "Shop ID", placeholder: "Enter Etsy shop ID", secret: false }
+      { key: "keystring", label: "Keystring", placeholder: "Enter Etsy app keystring", secret: true },
+      { key: "sharedSecret", label: "Shared Secret", placeholder: "Enter Etsy shared secret", secret: true },
+      { key: "redirectUri", label: "Redirect URI", placeholder: "Enter registered HTTPS redirect URI", secret: false }
+    ],
+    supportsOAuth: true,
+    liveSetupNotes: [
+      "Use the Etsy keystring as OAuth client_id.",
+      "Redirect URI must exactly match the Etsy app configuration."
     ]
   },
   {
@@ -59,10 +69,11 @@ export default function IntegrationsScreen() {
   const [draftNames, setDraftNames] = useState<DraftNames>({});
   const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [error, setError] = useState<string | null>(null);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAddIntegrationModalOpen, setIsAddIntegrationModalOpen] = useState(false);
   const [selectedIntegrationKey, setSelectedIntegrationKey] = useState<string | null>(null);
+  const [preparedOAuth, setPreparedOAuth] = useState<PreparedIntegrationOAuth | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -98,7 +109,7 @@ export default function IntegrationsScreen() {
     }
   }
 
-  function updateField(integrationKey: string, fieldKey: string, value: string) {
+  function updateField(integrationKey: string | number, fieldKey: string, value: string) {
     setDraftValues((current) => ({
       ...current,
       [integrationKey]: {
@@ -108,14 +119,14 @@ export default function IntegrationsScreen() {
     }));
   }
 
-  function updateConnectionName(connectionId: string, value: string) {
+  function updateConnectionName(connectionId: number, value: string) {
     setDraftNames((current) => ({
       ...current,
       [connectionId]: value
     }));
   }
 
-  async function saveConnection(connectionId: string) {
+  async function saveConnection(connectionId: number) {
     const connection = connections.find((entry) => entry.connectionId === connectionId);
     if (!connection) {
       return;
@@ -170,7 +181,7 @@ export default function IntegrationsScreen() {
     }
   }
 
-  async function removeConnection(connectionId: string) {
+  async function removeConnection(connectionId: number) {
     setBusyKey(connectionId);
     setError(null);
 
@@ -185,13 +196,31 @@ export default function IntegrationsScreen() {
     }
   }
 
-  async function syncConnection(connectionId: string) {
+  async function syncConnection(connectionId: number) {
     setBusyKey(connectionId);
     setError(null);
 
     try {
       await orderSyncService.syncOrders(connectionId);
       await refresh();
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function prepareOAuth(connectionId: number) {
+    setBusyKey(`oauth:${connectionId}`);
+    setError(null);
+
+    try {
+      const prepared = await integrationAuthService.prepareOAuthConnection(connectionId);
+      if (!prepared) {
+        throw new Error("OAuth preparation is not available for this integration.");
+      }
+      setPreparedOAuth(prepared);
+      showToast("Prepared Etsy OAuth URL");
     } catch (nextError) {
       setError((nextError as Error).message);
     } finally {
@@ -241,6 +270,15 @@ export default function IntegrationsScreen() {
                 <Text style={styles.integrationTypeText}>
                   Integration Type: {connection.integrationName}
                 </Text>
+                {connection.liveSetupNotes?.length ? (
+                  <View style={styles.noteCard}>
+                    {connection.liveSetupNotes.map((note) => (
+                      <Text key={`${connection.connectionId}:${note}`} style={styles.noteText}>
+                        {`\u2022 ${note}`}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
 
                 <View style={styles.fieldGroup}>
                   <Text style={styles.fieldLabel}>Connection Name</Text>
@@ -341,6 +379,17 @@ export default function IntegrationsScreen() {
                 ))}
 
                 <View style={styles.actionRow}>
+                  {connection.supportsOAuth ? (
+                    <Pressable
+                      disabled={isBusy || busyKey === `oauth:${connection.connectionId}`}
+                      onPress={() => void prepareOAuth(connection.connectionId)}
+                      style={styles.secondaryButton}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {busyKey === `oauth:${connection.connectionId}` ? "Preparing..." : "Prepare OAuth"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   <Pressable
                     disabled={isBusy}
                     onPress={() => syncConnection(connection.connectionId)}
@@ -522,6 +571,39 @@ export default function IntegrationsScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={preparedOAuth !== null}
+        onRequestClose={() => setPreparedOAuth(null)}
+      >
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardTitle}>Prepared Etsy OAuth</Text>
+              <Pressable onPress={() => setPreparedOAuth(null)} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Redirect URI</Text>
+              <Text style={styles.oauthValue}>{preparedOAuth?.redirectUri}</Text>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Scopes</Text>
+              <Text style={styles.oauthValue}>{preparedOAuth?.scopes.join(", ")}</Text>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Authorization URL</Text>
+              <Text style={styles.oauthUrl}>{preparedOAuth?.authorizationUrl}</Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -573,6 +655,19 @@ function createStyles(theme: AppTheme) {
       fontSize: 14,
       lineHeight: 20
     },
+    noteCard: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      gap: spacing.xs,
+      padding: spacing.md
+    },
+    noteText: {
+      color: colors.muted,
+      fontSize: 13,
+      lineHeight: 18
+    },
     integrationTypeText: {
       color: colors.muted,
       fontSize: 13,
@@ -595,6 +690,16 @@ function createStyles(theme: AppTheme) {
       fontSize: 15,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.md
+    },
+    oauthValue: {
+      color: colors.text,
+      fontSize: 14,
+      lineHeight: 20
+    },
+    oauthUrl: {
+      color: colors.text,
+      fontSize: 13,
+      lineHeight: 18
     },
     metricsGrid: {
       flexDirection: "row",

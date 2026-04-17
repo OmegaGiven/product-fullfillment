@@ -29,8 +29,8 @@ export const STEP_LIBRARY: StepPreset[] = [
   },
   {
     type: "ocr-match",
-    title: "Run OCR And Order Matching",
-    description: "Extract recipient details and rank order candidates."
+    title: "Run OCR, Review, And Confirm Match",
+    description: "Extract recipient details, review ranked candidates, and confirm the selected order."
   },
   {
     type: "select-order-manual",
@@ -43,9 +43,9 @@ export const STEP_LIBRARY: StepPreset[] = [
     description: "Require a human to approve the selected order."
   },
   {
-    type: "preview-message",
-    title: "Preview Message",
-    description: "Generate the outbound message for review."
+    type: "message-customer",
+    title: "Message Customer",
+    description: "Generate, review, and send the outbound customer message."
   },
   {
     type: "approve-send",

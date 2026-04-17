@@ -10,7 +10,7 @@ export class LocalOrderSyncService implements OrderSyncService {
     private integrationAuthService: IntegrationAuthService
   ) {}
 
-  async syncOrders(connectionId?: string) {
+  async syncOrders(connectionId?: number) {
     const connections = await this.integrationAuthService.listConnections();
     const existingOrders = await this.storageService.listOrders();
 
@@ -43,7 +43,7 @@ export class LocalOrderSyncService implements OrderSyncService {
   }
 
   private async syncConnection(connection: {
-    connectionId: string;
+    connectionId: number;
     connectionName: string;
     integrationKey: string;
     integrationName: string;
@@ -52,7 +52,7 @@ export class LocalOrderSyncService implements OrderSyncService {
     if (connection.mode === "mock") {
       return getSeededOrdersForIntegration(connection.integrationKey).map((order) => ({
         ...order,
-        id: `${connection.connectionId}:${order.id}`,
+        id: Number(`${connection.connectionId}${order.id}`),
         integrationConnectionId: connection.connectionId,
         integrationConnectionName: connection.connectionName,
         integrationName: connection.integrationName

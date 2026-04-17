@@ -1,6 +1,6 @@
 import type { WorkflowStep, WorkflowTemplate } from "../domain";
 import { DEFAULT_WORKFLOW_TEMPLATE } from "./defaultWorkflow";
-import { createId } from "../utils";
+import { createLocalRecordId } from "../utils";
 
 function cloneStep(step: WorkflowStep): WorkflowStep {
   return {
@@ -20,11 +20,11 @@ export function cloneTemplate(template: WorkflowTemplate): WorkflowTemplate {
 export function createWorkflowFromTemplate(index: number): WorkflowTemplate {
   const steps = DEFAULT_WORKFLOW_TEMPLATE.steps.map((step) => ({
     ...cloneStep(step),
-    id: createId("step")
+    id: `step_${createLocalRecordId()}`
   }));
 
   return {
-    id: createId("workflow"),
+    id: createLocalRecordId(),
     name: `Workflow ${index + 1}`,
     executionMode: "local",
     stepOrder: steps.map((step) => step.id),
@@ -34,7 +34,7 @@ export function createWorkflowFromTemplate(index: number): WorkflowTemplate {
 
 export function createBlankWorkflow(index: number): WorkflowTemplate {
   return {
-    id: createId("workflow"),
+    id: createLocalRecordId(),
     name: `Blank Workflow ${index + 1}`,
     executionMode: "local",
     stepOrder: [],

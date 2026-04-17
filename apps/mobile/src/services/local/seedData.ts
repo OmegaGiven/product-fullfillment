@@ -2,7 +2,8 @@ import type { ImportedOrder, MessageTemplate } from "../../domain";
 
 export const seededOrders: ImportedOrder[] = [
   {
-    id: "order_etsy_1001",
+    id: 1001,
+    externalOrderId: "order_etsy_1001",
     integrationKey: "etsy",
     integrationName: "Etsy",
     orderNumber: "ETSY-1001",
@@ -21,7 +22,8 @@ export const seededOrders: ImportedOrder[] = [
     createdAt: "2026-04-17T10:00:00.000Z"
   },
   {
-    id: "order_squarespace_2001",
+    id: 2001,
+    externalOrderId: "order_squarespace_2001",
     integrationKey: "squarespace",
     integrationName: "Squarespace",
     orderNumber: "SQSP-2001",
@@ -47,7 +49,7 @@ export function getSeededOrdersForIntegration(integrationKey: string) {
 
 export const seededTemplates: MessageTemplate[] = [
   {
-    id: "template_default",
+    id: 1,
     name: "Default Shipment Confirmation",
     subject: "Your order {{orderNumber}} is packed",
     body:

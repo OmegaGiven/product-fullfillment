@@ -1,9 +1,9 @@
 import * as MailComposer from "expo-mail-composer";
 
-import type { MessageTemplate, RunId } from "../../domain";
+import type { FulfillmentId, MessageTemplate } from "../../domain";
 import { renderMessageTemplate } from "../../messages/renderMessageTemplate";
 import type { MessageService } from "../interfaces";
-import { createId, nowIso } from "../../utils";
+import { createLocalRecordId, nowIso } from "../../utils";
 
 import type { LocalStorageService } from "./localStorageService";
 import { seededTemplates } from "./seedData";
@@ -11,8 +11,8 @@ import { seededTemplates } from "./seedData";
 export class LocalMessageService implements MessageService {
   constructor(private storageService: LocalStorageService) {}
 
-  private async resolveTemplate(runId: RunId): Promise<MessageTemplate> {
-    const state = await this.storageService.getRunState(runId);
+  private async resolveTemplate(fulfillmentId: FulfillmentId): Promise<MessageTemplate> {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -20,11 +20,11 @@ export class LocalMessageService implements MessageService {
     const workflow = await this.storageService.getWorkflowTemplate(state.run.workflowTemplateId);
     const selectedTemplateId = workflow?.steps.find(
       (step) =>
-        (step.type === "preview-message" || step.type === "approve-send") &&
-        typeof step.config.messageTemplateId === "string"
+        (step.type === "message-customer" || step.type === "approve-send") &&
+        typeof step.config.messageTemplateId === "number"
     )?.config.messageTemplateId;
 
-    if (typeof selectedTemplateId === "string") {
+    if (typeof selectedTemplateId === "number") {
       const selectedTemplate = await this.storageService.getMessageTemplate(selectedTemplateId);
       if (selectedTemplate) {
         return selectedTemplate;
@@ -35,8 +35,8 @@ export class LocalMessageService implements MessageService {
     return storedTemplates[0] ?? seededTemplates[0];
   }
 
-  async generateMessagePreview(runId: RunId) {
-    const state = await this.storageService.getRunState(runId);
+  async generateMessagePreview(fulfillmentId: FulfillmentId) {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -50,7 +50,7 @@ export class LocalMessageService implements MessageService {
       throw new Error("Matched order was not found.");
     }
 
-    const template = await this.resolveTemplate(runId);
+    const template = await this.resolveTemplate(fulfillmentId);
     const channel = order.availableChannels.includes("integration-message")
       ? "integration-message"
       : order.buyerEmail
@@ -59,8 +59,8 @@ export class LocalMessageService implements MessageService {
 
     const rendered = renderMessageTemplate(template, order);
     const preview = {
-      id: createId("message"),
-      runId,
+      id: createLocalRecordId(),
+      fulfillmentId,
       channel,
       status: channel === "manual" ? "blocked" : "pending",
       subject: rendered.subject,
@@ -80,8 +80,8 @@ export class LocalMessageService implements MessageService {
     return preview;
   }
 
-  async approveAndSend(runId: RunId, channel: "integration-message" | "email" | "manual") {
-    const state = await this.storageService.getRunState(runId);
+  async approveAndSend(fulfillmentId: FulfillmentId, channel: "integration-message" | "email" | "manual") {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state || !state.previewMessage) {
       throw new Error("Generate a preview before sending.");
     }
@@ -121,7 +121,7 @@ export class LocalMessageService implements MessageService {
         status
       },
       approval: {
-        runId,
+        fulfillmentId,
         approvedAt: nowIso(),
         approvedBy: "local-device-user"
       }

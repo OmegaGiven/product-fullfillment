@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const requiredFiles = [
   "app/_layout.tsx",
   "app/index.tsx",
-  "app/runs/[runId].tsx",
+  "app/runs/[fulfillmentId].tsx",
   "src/providers/AppProviders.tsx",
   "src/services/interfaces.ts",
   "src/services/local/localServices.ts",

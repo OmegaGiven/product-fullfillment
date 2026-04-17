@@ -1,7 +1,7 @@
-import type { RunId, WorkflowRunState, WorkflowTemplate } from "../../domain";
+import type { FulfillmentId, WorkflowRunState, WorkflowTemplate } from "../../domain";
 import type { WorkflowService } from "../interfaces";
 import { DEFAULT_WORKFLOW_TEMPLATE } from "../../workflow/defaultWorkflow";
-import { clamp, nowIso } from "../../utils";
+import { appendTouchedByUser, clamp, LOCAL_DEVICE_USER_ID, nowIso } from "../../utils";
 
 import type { LocalStorageService } from "./localStorageService";
 
@@ -16,7 +16,7 @@ function buildInitialStepStates(stepOrder: string[]) {
 export class LocalWorkflowService implements WorkflowService {
   constructor(private storageService: LocalStorageService) {}
 
-  private async createRunId() {
+  private async createFulfillmentId() {
     const runs = await this.storageService.listRuns();
     const numericIds = runs
       .map((run) => (typeof run.id === "number" ? run.id : null))
@@ -48,20 +48,20 @@ export class LocalWorkflowService implements WorkflowService {
     return template;
   }
 
-  async deleteWorkflowTemplate(templateId: string) {
+  async deleteWorkflowTemplate(templateId: number) {
     await this.storageService.deleteWorkflowTemplate(templateId);
   }
 
-  async createFulfillmentRun(templateId?: string) {
+  async createFulfillmentRun(templateId?: number) {
     const workflow =
       templateId == null
         ? await this.getDefaultWorkflow()
         : ((await this.storageService.getWorkflowTemplate(templateId)) ?? (await this.getDefaultWorkflow()));
     const timestamp = nowIso();
-    const runId = await this.createRunId();
+    const fulfillmentId = await this.createFulfillmentId();
     const run = {
-      id: runId,
-      name: `${workflow.name}: #${runId}`,
+      id: fulfillmentId,
+      name: `${workflow.name}: #${fulfillmentId}`,
       executionMode: workflow.executionMode,
       workflowTemplateId: workflow.id,
       currentStepIndex: 0,
@@ -69,6 +69,7 @@ export class LocalWorkflowService implements WorkflowService {
       status: "draft" as const,
       matchedOrderId: null,
       selectedChannel: null,
+      touchedByUsers: [LOCAL_DEVICE_USER_ID],
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -81,7 +82,7 @@ export class LocalWorkflowService implements WorkflowService {
       candidates: [],
       previewMessage: null,
       approval: {
-        runId: run.id,
+        fulfillmentId: run.id,
         approvedAt: null,
         approvedBy: null
       }
@@ -91,8 +92,8 @@ export class LocalWorkflowService implements WorkflowService {
     return run;
   }
 
-  async getRunState(runId: RunId) {
-    return this.storageService.getRunState(runId);
+  async getRunState(fulfillmentId: FulfillmentId) {
+    return this.storageService.getRunState(fulfillmentId);
   }
 
   async saveRunState(state: WorkflowRunState) {
@@ -100,17 +101,18 @@ export class LocalWorkflowService implements WorkflowService {
       ...state,
       run: {
         ...state.run,
+        touchedByUsers: appendTouchedByUser(state.run.touchedByUsers, LOCAL_DEVICE_USER_ID),
         updatedAt: nowIso()
       }
     });
   }
 
-  async deleteFulfillmentRun(runId: RunId) {
-    await this.storageService.deleteRunState(runId);
+  async deleteFulfillmentRun(fulfillmentId: FulfillmentId) {
+    await this.storageService.deleteRunState(fulfillmentId);
   }
 
-  async goToPreviousStep(runId: RunId) {
-    const state = await this.storageService.getRunState(runId);
+  async goToPreviousStep(fulfillmentId: FulfillmentId) {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -132,6 +134,7 @@ export class LocalWorkflowService implements WorkflowService {
         ...state.run,
         currentStepIndex: previousIndex,
         status: previousIndex === 0 ? "draft" : "in-progress",
+        touchedByUsers: appendTouchedByUser(state.run.touchedByUsers, LOCAL_DEVICE_USER_ID),
         updatedAt: nowIso()
       },
       stepStates
@@ -141,8 +144,8 @@ export class LocalWorkflowService implements WorkflowService {
     return updatedState;
   }
 
-  async advanceStep(runId: RunId) {
-    const state = await this.storageService.getRunState(runId);
+  async advanceStep(fulfillmentId: FulfillmentId) {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -164,6 +167,7 @@ export class LocalWorkflowService implements WorkflowService {
         ...state.run,
         currentStepIndex: nextIndex,
         status: nextIndex === state.run.stepOrder.length - 1 ? "review" : "in-progress",
+        touchedByUsers: appendTouchedByUser(state.run.touchedByUsers, LOCAL_DEVICE_USER_ID),
         updatedAt: nowIso()
       },
       stepStates

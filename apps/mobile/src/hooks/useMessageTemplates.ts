@@ -26,7 +26,7 @@ export function useMessageTemplates() {
   );
 
   const deleteTemplate = useCallback(
-    async (templateId: string) => {
+    async (templateId: number) => {
       await storageService.deleteMessageTemplate(templateId);
       await refresh();
     },

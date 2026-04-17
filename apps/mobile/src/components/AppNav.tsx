@@ -1,10 +1,10 @@
 import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { NAV_PAGE_LABELS, type NavKey } from "../accessControl/accessControl";
+import { useAccessControl } from "../providers/AccessControlProvider";
 import { useAppTheme } from "../providers/AppearanceProvider";
 import type { AppTheme } from "../theme";
-
-type NavKey = "home" | "orders" | "history" | "workflows" | "templates" | "integrations" | "user";
 
 type Props = {
   title: string;
@@ -16,25 +16,27 @@ const NAV_ITEMS: {
   label: string;
   href: "/" | "/orders" | "/history" | "/workflows" | "/templates" | "/integrations" | "/settings";
 }[] = [
-  { key: "home", label: "Home", href: "/" },
-  { key: "orders", label: "Orders", href: "/orders" },
-  { key: "history", label: "Fulfillments", href: "/history" },
-  { key: "workflows", label: "Workflows", href: "/workflows" },
-  { key: "templates", label: "Templates", href: "/templates" },
-  { key: "integrations", label: "Integrations", href: "/integrations" },
-  { key: "user", label: "User", href: "/settings" }
+  { key: "home", label: NAV_PAGE_LABELS.home, href: "/" },
+  { key: "orders", label: NAV_PAGE_LABELS.orders, href: "/orders" },
+  { key: "history", label: NAV_PAGE_LABELS.history, href: "/history" },
+  { key: "workflows", label: NAV_PAGE_LABELS.workflows, href: "/workflows" },
+  { key: "templates", label: NAV_PAGE_LABELS.templates, href: "/templates" },
+  { key: "integrations", label: NAV_PAGE_LABELS.integrations, href: "/integrations" },
+  { key: "user", label: NAV_PAGE_LABELS.user, href: "/settings" }
 ];
 
 export function AppNav({ title, active = null }: Props) {
   const router = useRouter();
   const { theme } = useAppTheme();
+  const { canAccessPage } = useAccessControl();
   const styles = createStyles(theme);
+  const visibleItems = NAV_ITEMS.filter((item) => canAccessPage(item.key, "read") || item.key === active);
 
   return (
     <View style={styles.topRow}>
       <Text style={styles.title}>{title}</Text>
       <View style={styles.actionsRow}>
-        {NAV_ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const isActive = item.key === active;
           return (
             <Pressable

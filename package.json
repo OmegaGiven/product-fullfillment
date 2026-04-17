@@ -11,6 +11,7 @@
     "mobile:android": "npm --workspace apps/mobile run android",
     "mobile:ios": "npm --workspace apps/mobile run ios",
     "mobile:web": "npm --workspace apps/mobile run web",
+    "mobile:seed:orders": "npm --workspace apps/mobile run seed:orders --",
     "mobile:test": "npm --workspace apps/mobile run test",
     "backend:dev": "npm --workspace apps/backend run start:dev"
   }

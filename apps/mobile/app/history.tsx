@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useState } from "react";
 
 import { AppNav } from "../src/components/AppNav";
@@ -8,10 +8,15 @@ import { useFulfillmentRuns } from "../src/hooks/useFulfillmentRuns";
 import { useWorkflowTemplates } from "../src/hooks/useWorkflowTemplates";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
 import { useToast } from "../src/providers/ToastProvider";
+import type { RecordId } from "../src/domain";
 import type { AppTheme } from "../src/theme";
 
-function formatRunTitle(workflowName: string | undefined, runName: string, runId: string | number) {
-  return `${workflowName ?? runName}: #${runId}`;
+function formatRunTitle(
+  workflowName: string | undefined,
+  runName: string,
+  fulfillmentId: RecordId
+) {
+  return `${workflowName ?? runName}: #${fulfillmentId}`;
 }
 
 export default function HistoryScreen() {
@@ -23,14 +28,139 @@ export default function HistoryScreen() {
   const { runs, deleteRun } = useFulfillmentRuns();
   const { templates } = useWorkflowTemplates();
   const [runPendingDelete, setRunPendingDelete] = useState<{
-    id: string | number;
+    id: RecordId;
     title: string;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [filters, setFilters] = useState({
+    fulfillmentId: "",
+    workflowId: "",
+    status: "",
+    step: "",
+    mode: "",
+    matched: "",
+    channel: "",
+    created: "",
+    updated: ""
+  });
+  const [sortState, setSortState] = useState<{
+    key:
+      | "fulfillmentId"
+      | "workflowId"
+      | "status"
+      | "step"
+      | "mode"
+      | "matched"
+      | "channel"
+      | "created"
+      | "updated"
+      | null;
+    direction: "asc" | "desc" | null;
+  }>({
+    key: null,
+    direction: null
+  });
 
-  const sortedRuns = [...runs].sort(
-    (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  );
+  const filteredRuns = runs.filter((run) => {
+    const workflow = templates.find((template) => template.id === run.workflowTemplateId);
+    const stepLabel = `${run.currentStepIndex + 1} / ${run.stepOrder.length}`;
+    const createdLabel = new Date(run.createdAt).toLocaleDateString();
+    const updatedLabel = new Date(run.updatedAt).toLocaleDateString();
+    const matchedLabel = run.matchedOrderId ? String(run.matchedOrderId) : "no";
+
+    return (
+      String(run.id).includes(filters.fulfillmentId.trim()) &&
+      String(run.workflowTemplateId).includes(filters.workflowId.trim()) &&
+      run.status.toLowerCase().includes(filters.status.trim().toLowerCase()) &&
+      stepLabel.toLowerCase().includes(filters.step.trim().toLowerCase()) &&
+      run.executionMode.toLowerCase().includes(filters.mode.trim().toLowerCase()) &&
+      matchedLabel.toLowerCase().includes(filters.matched.trim().toLowerCase()) &&
+      String(run.selectedChannel ?? "none").toLowerCase().includes(filters.channel.trim().toLowerCase()) &&
+      createdLabel.toLowerCase().includes(filters.created.trim().toLowerCase()) &&
+      updatedLabel.toLowerCase().includes(filters.updated.trim().toLowerCase())
+    );
+  });
+
+  const sortedRuns = [...filteredRuns].sort((left, right) => {
+    if (!sortState.key || !sortState.direction) {
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    }
+
+    const directionFactor = sortState.direction === "asc" ? 1 : -1;
+    const leftStep = left.currentStepIndex + 1;
+    const rightStep = right.currentStepIndex + 1;
+
+    switch (sortState.key) {
+      case "fulfillmentId":
+        return (left.id - right.id) * directionFactor;
+      case "workflowId":
+        return (left.workflowTemplateId - right.workflowTemplateId) * directionFactor;
+      case "status":
+        return left.status.localeCompare(right.status) * directionFactor;
+      case "step":
+        return (leftStep - rightStep) * directionFactor;
+      case "mode":
+        return left.executionMode.localeCompare(right.executionMode) * directionFactor;
+      case "matched":
+        return ((left.matchedOrderId ?? -1) - (right.matchedOrderId ?? -1)) * directionFactor;
+      case "channel":
+        return String(left.selectedChannel ?? "").localeCompare(String(right.selectedChannel ?? "")) * directionFactor;
+      case "created":
+        return (new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()) * directionFactor;
+      case "updated":
+        return (new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime()) * directionFactor;
+      default:
+        return 0;
+    }
+  });
+
+  function toggleSort(
+    key:
+      | "fulfillmentId"
+      | "workflowId"
+      | "status"
+      | "step"
+      | "mode"
+      | "matched"
+      | "channel"
+      | "created"
+      | "updated"
+  ) {
+    setSortState((current) => {
+      if (current.key !== key) {
+        return { key, direction: "asc" };
+      }
+
+      if (current.direction === "asc") {
+        return { key, direction: "desc" };
+      }
+
+      if (current.direction === "desc") {
+        return { key: null, direction: null };
+      }
+
+      return { key, direction: "asc" };
+    });
+  }
+
+  function getSortArrow(
+    key:
+      | "fulfillmentId"
+      | "workflowId"
+      | "status"
+      | "step"
+      | "mode"
+      | "matched"
+      | "channel"
+      | "created"
+      | "updated"
+  ) {
+    if (sortState.key !== key || !sortState.direction) {
+      return "";
+    }
+
+    return sortState.direction === "asc" ? " ↑" : " ↓";
+  }
 
   async function confirmDelete() {
     if (!runPendingDelete) {
@@ -66,30 +196,60 @@ export default function HistoryScreen() {
         </View>
       ) : null}
 
-      <View style={styles.summaryRow}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Runs</Text>
-          <Text style={styles.summaryValue}>{runs.length}</Text>
+      <View style={styles.filterActionsRow}>
+        <View style={styles.filterButtons}>
+          <Pressable
+            onPress={() =>
+              setFilters({
+                fulfillmentId: "",
+                workflowId: "",
+                status: "",
+                step: "",
+                mode: "",
+                matched: "",
+                channel: "",
+                created: "",
+                updated: ""
+              })
+            }
+            style={styles.clearButton}
+          >
+            <Text style={styles.clearButtonText}>Clear Filters</Text>
+          </Pressable>
         </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Completed</Text>
-          <Text style={styles.summaryValue}>
-            {runs.filter((run) => run.status === "completed").length}
-          </Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>In Progress</Text>
-          <Text style={styles.summaryValue}>
-            {runs.filter((run) => run.status !== "completed").length}
-          </Text>
+        <View style={styles.statsRow}>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Filtered</Text>
+            <Text style={styles.statValue}>{filteredRuns.length}</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Runs</Text>
+            <Text style={styles.statValue}>{runs.length}</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Completed</Text>
+            <Text style={styles.statValue}>
+              {runs.filter((run) => run.status === "completed").length}
+            </Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>In Progress</Text>
+            <Text style={styles.statValue}>
+              {runs.filter((run) => run.status !== "completed").length}
+            </Text>
+          </View>
         </View>
       </View>
 
       {sortedRuns.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No fulfillment history yet</Text>
+          <Text style={styles.emptyTitle}>
+            {runs.length === 0 ? "No fulfillment history yet" : "No fulfillments match the current filters"}
+          </Text>
           <Text style={styles.emptyText}>
-            Start a workflow from Home and it will appear here with its run details.
+            {runs.length === 0
+              ? "Start a workflow from Home and it will appear here with its run details."
+              : "Adjust or clear the filters to see more of the saved fulfillment runs."}
           </Text>
         </View>
       ) : (
@@ -102,15 +262,145 @@ export default function HistoryScreen() {
           >
             <View style={styles.tableInner}>
               <View style={[styles.tableRow, styles.tableHeaderRow]}>
-                <Text style={[styles.tableCell, styles.cellRun, styles.tableHeaderText]}>Run</Text>
-                <Text style={[styles.tableCell, styles.cellStatus, styles.tableHeaderText]}>Status</Text>
-                <Text style={[styles.tableCell, styles.cellStep, styles.tableHeaderText]}>Step</Text>
-                <Text style={[styles.tableCell, styles.cellMode, styles.tableHeaderText]}>Mode</Text>
-                <Text style={[styles.tableCell, styles.cellMatch, styles.tableHeaderText]}>Matched</Text>
-                <Text style={[styles.tableCell, styles.cellChannel, styles.tableHeaderText]}>Channel</Text>
-                <Text style={[styles.tableCell, styles.cellDate, styles.tableHeaderText]}>Created</Text>
-                <Text style={[styles.tableCell, styles.cellDate, styles.tableHeaderText]}>Updated</Text>
+                <Pressable
+                  onPress={() => toggleSort("fulfillmentId")}
+                  style={[styles.tableCell, styles.cellRunId, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Fulfillment ID{getSortArrow("fulfillmentId")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("workflowId")}
+                  style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Workflow ID{getSortArrow("workflowId")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("status")}
+                  style={[styles.tableCell, styles.cellStatus, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Status{getSortArrow("status")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("step")}
+                  style={[styles.tableCell, styles.cellStep, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Step{getSortArrow("step")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("mode")}
+                  style={[styles.tableCell, styles.cellMode, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Mode{getSortArrow("mode")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("matched")}
+                  style={[styles.tableCell, styles.cellMatch, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Matched{getSortArrow("matched")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("channel")}
+                  style={[styles.tableCell, styles.cellChannel, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Channel{getSortArrow("channel")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("created")}
+                  style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Created{getSortArrow("created")}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleSort("updated")}
+                  style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Updated{getSortArrow("updated")}</Text>
+                </Pressable>
                 <Text style={[styles.tableCell, styles.cellActions, styles.tableHeaderText]}>Actions</Text>
+              </View>
+              <View style={[styles.tableRow, styles.tableFilterRow]}>
+                <View style={[styles.tableCell, styles.cellRunId]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, fulfillmentId: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.fulfillmentId}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellWorkflow]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, workflowId: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.workflowId}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellStatus]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, status: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.status}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellStep]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, step: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.step}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellMode]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, mode: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.mode}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellMatch]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, matched: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.matched}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellChannel]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, channel: value }))}
+                    placeholder="Filter"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.channel}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellDate]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, created: value }))}
+                    placeholder="MM/DD/YYYY"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.created}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellDate]}>
+                  <TextInput
+                    onChangeText={(value) => setFilters((current) => ({ ...current, updated: value }))}
+                    placeholder="MM/DD/YYYY"
+                    placeholderTextColor={theme.colors.muted}
+                    style={styles.filterInput}
+                    value={filters.updated}
+                  />
+                </View>
+                <View style={[styles.tableCell, styles.cellActions]} />
               </View>
 
               {sortedRuns.map((run, index) => {
@@ -124,12 +414,14 @@ export default function HistoryScreen() {
                       index % 2 === 1 ? styles.tableRowAlt : null
                     ]}
                   >
-                    <View style={[styles.tableCell, styles.cellRun]}>
+                    <View style={[styles.tableCell, styles.cellRunId]}>
                       <Text style={styles.cellPrimaryText}>
-                        {runTitle}
+                        {String(run.id)}
                       </Text>
-                      <Text style={styles.cellSecondaryText}>
-                        Workflow: {workflow?.name ?? "Unknown"}
+                    </View>
+                    <View style={[styles.tableCell, styles.cellWorkflow]}>
+                      <Text style={styles.cellPrimaryText}>
+                        {run.workflowTemplateId}
                       </Text>
                     </View>
                     <View style={[styles.tableCell, styles.cellStatus]}>
@@ -276,31 +568,59 @@ function createStyles(theme: AppTheme) {
       fontSize: 14,
       lineHeight: 20
     },
-    summaryRow: {
+    filterActionsRow: {
+      alignItems: "flex-start",
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.xs,
+      justifyContent: "space-between"
+    },
+    filterButtons: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: spacing.sm
     },
-    summaryCard: {
+    statsRow: {
+      alignItems: "stretch",
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.xs,
+      justifyContent: "flex-end",
+      marginLeft: "auto"
+    },
+    clearButton: {
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs + 2
+    },
+    clearButtonText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700"
+    },
+    statCard: {
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.border,
       borderRadius: radius.lg,
       borderWidth: 1,
-      flexGrow: 1,
-      gap: spacing.xs,
-      minWidth: 120,
-      padding: spacing.lg
+      gap: 2,
+      minWidth: 92,
+      paddingHorizontal: spacing.sm + 2,
+      paddingVertical: spacing.xs + 2
     },
-    summaryLabel: {
+    statLabel: {
       color: colors.muted,
       fontSize: 12,
       fontWeight: "700",
       letterSpacing: 0.8,
       textTransform: "uppercase"
     },
-    summaryValue: {
+    statValue: {
       color: colors.text,
-      fontSize: 28,
+      fontSize: 18,
       fontWeight: "700"
     },
     emptyCard: {
@@ -343,6 +663,9 @@ function createStyles(theme: AppTheme) {
       backgroundColor: colors.surface,
       borderTopWidth: 0
     },
+    tableFilterRow: {
+      backgroundColor: colors.surfaceRaised
+    },
     tableRowAlt: {
       backgroundColor: colors.surface
     },
@@ -353,18 +676,37 @@ function createStyles(theme: AppTheme) {
       letterSpacing: 0.6,
       textTransform: "uppercase"
     },
+    tableHeaderCell: {
+      justifyContent: "center"
+    },
     tableCell: {
       color: colors.text,
       fontSize: 14,
       lineHeight: 20,
-      minHeight: 72,
+      minHeight: 64,
       paddingHorizontal: spacing.md,
-      paddingVertical: spacing.md
+      paddingVertical: spacing.sm
     },
-    cellRun: {
-      flexBasis: 280,
-      flexGrow: 1.8,
-      minWidth: 280
+    filterInput: {
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      color: colors.text,
+      fontSize: 14,
+      minHeight: 40,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs
+    },
+    cellRunId: {
+      flexBasis: 180,
+      flexGrow: 1,
+      minWidth: 180
+    },
+    cellWorkflow: {
+      flexBasis: 240,
+      flexGrow: 1.5,
+      minWidth: 240
     },
     cellStatus: {
       flexBasis: 120,

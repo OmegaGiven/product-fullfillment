@@ -1,4 +1,4 @@
-import type { ImportedOrder, MatchCandidate, RunId, WorkflowRunState } from "../../domain";
+import type { FulfillmentId, ImportedOrder, MatchCandidate, WorkflowRunState } from "../../domain";
 import type { MatchService } from "../interfaces";
 import { nowIso } from "../../utils";
 
@@ -41,8 +41,8 @@ function scoreCandidate(
 export class LocalMatchService implements MatchService {
   constructor(private storageService: LocalStorageService) {}
 
-  async findMatchCandidates(runId: RunId) {
-    const state = await this.storageService.getRunState(runId);
+  async findMatchCandidates(fulfillmentId: FulfillmentId) {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -60,8 +60,8 @@ export class LocalMatchService implements MatchService {
     return candidates;
   }
 
-  async confirmMatchedOrder(runId: RunId, orderId: string) {
-    const state = await this.storageService.getRunState(runId);
+  async confirmMatchedOrder(fulfillmentId: FulfillmentId, orderId: number) {
+    const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
     }
@@ -76,7 +76,7 @@ export class LocalMatchService implements MatchService {
     };
 
     await this.storageService.saveRunState(nextState);
-    await this.storageService.saveOrderRunLink(orderId, runId);
+    await this.storageService.saveOrderFulfillmentLink(orderId, fulfillmentId);
     return nextState;
   }
 }

@@ -2,10 +2,11 @@ import type {
   IntegrationAuthService,
   IntegrationDefinition,
   IntegrationConnection,
-  IntegrationCredentialInput
+  IntegrationCredentialInput,
+  PreparedIntegrationOAuth
 } from "../interfaces";
 import { nowIso } from "../../utils";
-import { createId } from "../../utils";
+import { createLocalRecordId } from "../../utils";
 
 import {
   deleteSecureItem,
@@ -15,7 +16,7 @@ import {
 } from "./localSecureStore";
 
 type StoredConnectionRecord = {
-  connectionId: string;
+  connectionId: number;
   connectionName: string;
   integrationKey: string;
   mode: "mock" | "live";
@@ -26,26 +27,41 @@ type StoredConnectionRecord = {
 };
 
 const CONNECTION_INDEX_KEY = "integration:index";
+const OAUTH_STATE_PREFIX = "integration:oauth-state:";
+const ETSY_SCOPES = ["transactions_r", "shops_r", "shops_w"];
 
 const SUPPORTED_INTEGRATIONS: IntegrationDefinition[] = [
   {
     integrationKey: "etsy",
     integrationName: "Etsy",
     description:
-      "Primary V1 integration. Supports mock mode now and live API credentials later.",
+      "Primary V1 integration. Supports mock mode now and live OAuth preparation for seller authorization.",
     fields: [
       {
-        key: "apiKey",
-        label: "API Key",
-        placeholder: "Enter Etsy API key",
+        key: "keystring",
+        label: "Keystring",
+        placeholder: "Enter Etsy app keystring",
         secret: true
       },
       {
-        key: "shopId",
-        label: "Shop ID",
-        placeholder: "Enter Etsy shop ID",
+        key: "sharedSecret",
+        label: "Shared Secret",
+        placeholder: "Enter Etsy shared secret",
+        secret: true
+      },
+      {
+        key: "redirectUri",
+        label: "Redirect URI",
+        placeholder: "Enter the exact HTTPS redirect URI registered in Etsy",
         secret: false
       }
+    ],
+    supportsOAuth: true,
+    liveSetupNotes: [
+      "Use the Etsy keystring as client_id when building the OAuth URL.",
+      "The redirect URI must exactly match the HTTPS URI registered with Etsy.",
+      "OAuth uses PKCE and a single-use state value for every request.",
+      "The shared secret is still useful for x-api-key testing and later server-side verification."
     ]
   },
   {
@@ -65,11 +81,13 @@ const SUPPORTED_INTEGRATIONS: IntegrationDefinition[] = [
         placeholder: "Enter Squarespace site ID",
         secret: false
       }
-    ]
+    ],
+    supportsOAuth: false,
+    liveSetupNotes: ["Squarespace live API work is planned after Etsy."]
   }
 ];
 
-function getStorageKey(connectionId: string) {
+function getStorageKey(connectionId: number) {
   return `integration:${connectionId}`;
 }
 
@@ -87,8 +105,35 @@ function toConnection(
     lastSyncedAt: stored.lastSyncedAt,
     syncedOrderCount: stored.syncedOrderCount,
     hasStoredCredentials: Object.keys(stored.values).length > 0,
-    usesSecureStorage
+    usesSecureStorage,
+    supportsOAuth: base.supportsOAuth ?? false,
+    liveSetupNotes: base.liveSetupNotes ?? []
   };
+}
+
+function createPkceVerifier() {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  let verifier = "";
+  for (let index = 0; index < 64; index += 1) {
+    verifier += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return verifier;
+}
+
+function createStateToken() {
+  return `etsy_state_${createLocalRecordId()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function sha256Base64Url(input: string) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error("OAuth preparation needs Web Crypto support on this device.");
+  }
+
+  const digest = await subtle.digest("SHA-256", new TextEncoder().encode(input));
+  const bytes = Array.from(new Uint8Array(digest));
+  const binary = bytes.map((byte) => String.fromCharCode(byte)).join("");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 export class LocalIntegrationAuthService implements IntegrationAuthService {
@@ -97,10 +142,10 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
   }
 
   private async getConnectionIndex() {
-    return (await getSecureJson<string[]>(CONNECTION_INDEX_KEY)) ?? [];
+    return (await getSecureJson<number[]>(CONNECTION_INDEX_KEY)) ?? [];
   }
 
-  private async saveConnectionIndex(connectionIds: string[]) {
+  private async saveConnectionIndex(connectionIds: number[]) {
     await setSecureJson(CONNECTION_INDEX_KEY, connectionIds);
   }
 
@@ -145,7 +190,7 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
     }
 
     const record: StoredConnectionRecord = {
-      connectionId: input.connectionId ?? createId("connection"),
+      connectionId: input.connectionId ?? createLocalRecordId(),
       connectionName: input.connectionName.trim() || `${integration.integrationName} Store`,
       integrationKey: input.integrationKey,
       mode: input.mode,
@@ -172,13 +217,67 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
     return toConnection(integration, record, await isSecureStoreBacked());
   }
 
-  async removeCredentials(connectionId: string) {
+  async prepareOAuthConnection(connectionId: number): Promise<PreparedIntegrationOAuth | null> {
+    const connections = await this.listConnections();
+    const connection = connections.find((entry) => entry.connectionId === connectionId);
+    if (!connection || connection.integrationKey !== "etsy") {
+      return null;
+    }
+
+    const stored = await getSecureJson<StoredConnectionRecord>(getStorageKey(connectionId));
+    if (!stored) {
+      throw new Error("Integration connection not found.");
+    }
+
+    const keystring = stored.values.keystring?.trim();
+    const redirectUri = stored.values.redirectUri?.trim();
+
+    if (!keystring || !redirectUri) {
+      throw new Error("Etsy live setup requires both keystring and redirect URI.");
+    }
+
+    const codeVerifier = createPkceVerifier();
+    const codeChallenge = await sha256Base64Url(codeVerifier);
+    const state = createStateToken();
+    const requestedAt = nowIso();
+
+    await setSecureJson(`${OAUTH_STATE_PREFIX}${connectionId}`, {
+      state,
+      codeVerifier,
+      redirectUri,
+      scopes: ETSY_SCOPES,
+      requestedAt
+    });
+
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: keystring,
+      redirect_uri: redirectUri,
+      scope: ETSY_SCOPES.join(" "),
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256"
+    });
+
+    return {
+      connectionId,
+      integrationKey: connection.integrationKey,
+      authorizationUrl: `https://www.etsy.com/oauth/connect?${query.toString()}`,
+      redirectUri,
+      scopes: ETSY_SCOPES,
+      state,
+      requestedAt
+    };
+  }
+
+  async removeCredentials(connectionId: number) {
     await deleteSecureItem(getStorageKey(connectionId));
+    await deleteSecureItem(`${OAUTH_STATE_PREFIX}${connectionId}`);
     const connectionIndex = await this.getConnectionIndex();
     await this.saveConnectionIndex(connectionIndex.filter((entry) => entry !== connectionId));
   }
 
-  async recordSyncResult(connectionId: string, syncedOrderCount: number) {
+  async recordSyncResult(connectionId: number, syncedOrderCount: number) {
     const existing = await getSecureJson<StoredConnectionRecord>(getStorageKey(connectionId));
     if (!existing) {
       throw new Error("Integration connection not found.");

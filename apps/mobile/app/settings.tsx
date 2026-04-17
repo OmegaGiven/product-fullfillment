@@ -12,6 +12,13 @@ import {
 } from "react-native";
 
 import { AppNav } from "../src/components/AppNav";
+import {
+  NAV_KEYS,
+  NAV_PAGE_LABELS,
+  type NavKey,
+  type PageAccessLevel
+} from "../src/accessControl/accessControl";
+import { useAccessControl } from "../src/providers/AccessControlProvider";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
 import { useToast } from "../src/providers/ToastProvider";
 import type { AccentColor, AppTheme } from "../src/theme";
@@ -163,6 +170,21 @@ function describeRadiusScale(value: number) {
 export default function SettingsScreen() {
   const router = useRouter();
   const {
+    activePosition,
+    currentPageAccess,
+    isOrgAdmin,
+    personalNavVisibility,
+    positions,
+    setActivePositionId,
+    setOrgAdmin,
+    setPageAccessLevel,
+    setPositionDescription,
+    setPositionName,
+    toggleNavVisibility,
+    addPosition,
+    removePosition
+  } = useAccessControl();
+  const {
     accentColor,
     mode,
     radiusScale,
@@ -271,6 +293,149 @@ export default function SettingsScreen() {
             <Text style={styles.secondaryButtonText}>Manage Integrations</Text>
           </Pressable>
         </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Navigation Visibility</Text>
+          <Text style={styles.metaText}>
+            Choose which top navigation tabs are visible for this device user. Tickers let you quickly hide or show pages without changing the underlying role permissions.
+          </Text>
+          <View style={styles.permissionGrid}>
+            {NAV_KEYS.map((page) => {
+              const isVisible = personalNavVisibility[page];
+              return (
+                <Pressable
+                  key={`nav:${page}`}
+                  onPress={() => void toggleNavVisibility(page)}
+                  style={[
+                    styles.permissionChip,
+                    isVisible ? styles.permissionChipActive : null
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.permissionChipText,
+                      isVisible ? styles.permissionChipTextActive : null
+                    ]}
+                  >
+                    {isVisible ? "✓" : "○"} {NAV_PAGE_LABELS[page]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.metaText}>
+            Effective position: {activePosition?.name ?? "None"} • Current page access on
+            settings: {currentPageAccess("user")}
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.cardTitle}>Organization Positions</Text>
+            <View style={styles.sectionActionRow}>
+              <Pressable
+                onPress={() => void setOrgAdmin(!isOrgAdmin)}
+                style={[styles.secondaryButton, isOrgAdmin ? styles.modeButtonActive : null]}
+              >
+                <Text
+                  style={[
+                    styles.secondaryButtonText,
+                    isOrgAdmin ? styles.modeButtonTextActive : null
+                  ]}
+                >
+                  {isOrgAdmin ? "Admin Enabled" : "Admin Disabled"}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => void addPosition()} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>Add Position</Text>
+              </Pressable>
+            </View>
+          </View>
+          <Text style={styles.metaText}>
+            Create named positions for your organization and decide whether each page is hidden, read-only, or action-enabled.
+          </Text>
+          <View style={styles.positionSelectorRow}>
+            {positions.map((position) => {
+              const isActive = activePosition?.id === position.id;
+              return (
+                <Pressable
+                  key={`active-position:${position.id}`}
+                  onPress={() => void setActivePositionId(position.id)}
+                  style={[styles.permissionChip, isActive ? styles.permissionChipActive : null]}
+                >
+                  <Text
+                    style={[
+                      styles.permissionChipText,
+                      isActive ? styles.permissionChipTextActive : null
+                    ]}
+                  >
+                    {isActive ? "✓" : "○"} {position.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {positions.map((position) => (
+          <View key={position.id} style={styles.card}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.cardTitle}>{position.name}</Text>
+              {positions.length > 1 ? (
+                <Pressable onPress={() => void removePosition(position.id)} style={styles.ghostButton}>
+                  <Text style={styles.ghostButtonText}>Remove Position</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Position Name</Text>
+              <TextInput
+                value={position.name}
+                onChangeText={(value) => void setPositionName(position.id, value)}
+                placeholder="Position name"
+                placeholderTextColor={colors.muted}
+                style={styles.input}
+              />
+            </View>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Description</Text>
+              <TextInput
+                value={position.description}
+                onChangeText={(value) => void setPositionDescription(position.id, value)}
+                placeholder="Describe this role"
+                placeholderTextColor={colors.muted}
+                style={[styles.input, styles.textArea]}
+                multiline
+              />
+            </View>
+            {NAV_KEYS.map((page) => (
+              <View key={`${position.id}:${page}`} style={styles.permissionRow}>
+                <Text style={styles.permissionPageLabel}>{NAV_PAGE_LABELS[page]}</Text>
+                <View style={styles.permissionGrid}>
+                  {(["hidden", "read", "action"] as PageAccessLevel[]).map((level) => {
+                    const isActive = position.pageAccess[page] === level;
+                    return (
+                      <Pressable
+                        key={`${position.id}:${page}:${level}`}
+                        onPress={() => void setPageAccessLevel(position.id, page, level)}
+                        style={[styles.permissionChip, isActive ? styles.permissionChipActive : null]}
+                      >
+                        <Text
+                          style={[
+                            styles.permissionChipText,
+                            isActive ? styles.permissionChipTextActive : null
+                          ]}
+                        >
+                          {level}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+          </View>
+        ))}
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Appearance</Text>
@@ -612,6 +777,18 @@ function createStyles(theme: AppTheme) {
       flexWrap: "wrap",
       gap: spacing.sm
     },
+    sectionHeaderRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm,
+      justifyContent: "space-between"
+    },
+    sectionActionRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
     metricTile: {
       backgroundColor: colors.background,
       borderColor: colors.border,
@@ -638,6 +815,48 @@ function createStyles(theme: AppTheme) {
       color: colors.muted,
       fontSize: 14,
       lineHeight: 20
+    },
+    permissionRow: {
+      borderTopColor: colors.border,
+      borderTopWidth: 1,
+      gap: spacing.sm,
+      paddingTop: spacing.md
+    },
+    permissionPageLabel: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700"
+    },
+    permissionGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    permissionChip: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    permissionChipActive: {
+      backgroundColor: colors.accentSoft,
+      borderColor: colors.accent
+    },
+    permissionChipText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700",
+      textTransform: "capitalize"
+    },
+    permissionChipTextActive: {
+      color: colors.text
+    },
+    positionSelectorRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
     },
     modeRow: {
       flexDirection: "row",
@@ -817,6 +1036,21 @@ function createStyles(theme: AppTheme) {
       fontWeight: "700",
       textAlign: "center"
     },
+    ghostButton: {
+      backgroundColor: colors.dangerSoft,
+      borderColor: colors.danger,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      justifyContent: "center",
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md
+    },
+    ghostButtonText: {
+      color: colors.danger,
+      fontSize: 14,
+      fontWeight: "700",
+      textAlign: "center"
+    },
     modalScrim: {
       alignItems: "center",
       backgroundColor: "rgba(0, 0, 0, 0.42)",
@@ -938,6 +1172,10 @@ function createStyles(theme: AppTheme) {
       fontSize: 15,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.md
+    },
+    textArea: {
+      minHeight: 84,
+      textAlignVertical: "top"
     },
     modalActionRow: {
       flexDirection: "row",

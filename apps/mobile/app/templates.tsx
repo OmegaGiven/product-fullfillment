@@ -8,13 +8,13 @@ import { AppNav } from "../src/components/AppNav";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
 import { useToast } from "../src/providers/ToastProvider";
 import type { AppTheme } from "../src/theme";
-import { createId } from "../src/utils";
+import { createLocalRecordId } from "../src/utils";
 
 type DraftTemplate = MessageTemplate;
 
 function buildBlankTemplate(count: number): DraftTemplate {
   return {
-    id: createId("message_template"),
+    id: createLocalRecordId(),
     name: `Message Template ${count + 1}`,
     subject: "",
     body: ""

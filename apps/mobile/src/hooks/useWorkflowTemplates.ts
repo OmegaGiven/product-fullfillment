@@ -25,7 +25,7 @@ export function useWorkflowTemplates() {
   );
 
   const deleteTemplate = useCallback(
-    async (templateId: string) => {
+    async (templateId: number) => {
       await workflowService.deleteWorkflowTemplate(templateId);
       await refresh();
     },

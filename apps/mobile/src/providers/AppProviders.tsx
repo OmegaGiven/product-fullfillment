@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, useContext, useState, type PropsWithChildren } from "react";
 
+import { AccessControlProvider } from "./AccessControlProvider";
 import { AppearanceProvider } from "./AppearanceProvider";
 import { ToastProvider } from "./ToastProvider";
 import type { AppServices } from "../services/interfaces";
@@ -14,11 +15,13 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AppearanceProvider>
-        <ToastProvider>
-          <ServicesContext.Provider value={services}>{children}</ServicesContext.Provider>
-        </ToastProvider>
-      </AppearanceProvider>
+      <AccessControlProvider>
+        <AppearanceProvider>
+          <ToastProvider>
+            <ServicesContext.Provider value={services}>{children}</ServicesContext.Provider>
+          </ToastProvider>
+        </AppearanceProvider>
+      </AccessControlProvider>
     </QueryClientProvider>
   );
 }

@@ -116,6 +116,25 @@ The plan should prioritize the real fulfillment loop first. Workflow modularity,
   - the server stores credentials and performs sync
   - the phone no longer persists raw integration secrets locally beyond session needs
 
+### Etsy live integration plan
+- Use Etsy Open API v3 with OAuth 2.0 Authorization Code flow and PKCE for seller authorization
+- Store Etsy `keystring`, `shared secret`, and the exact registered HTTPS `redirect URI` in secure local storage in local mode
+- Generate and store a single-use OAuth `state` and PKCE `code_verifier` locally before launching Etsy authorization
+- Start with Etsy scopes:
+  - `transactions_r`
+  - `shops_r`
+  - `shops_w`
+- Expose an Etsy authorization URL from the mobile app so live testing can begin before the full callback exchange is wired
+- Stage the Etsy rollout as:
+  1. save Etsy live credentials
+  2. generate OAuth URL with PKCE
+  3. complete seller approval in browser
+  4. add callback handling and token exchange
+  5. store `access_token`, `refresh_token`, expiry, and Etsy account identity
+  6. fetch live Etsy orders into normalized local storage
+- Keep the callback/token exchange compatible with a future HTTPS backend callback service, because Etsy requires an exact registered HTTPS redirect URI
+- Continue supporting mock mode while live Etsy auth remains partial
+
 ### Phase 3: Matching and message preparation
 - Run OCR on-device against the detected or selected label photo
 - Add a web OCR implementation later that can use browser camera capture or uploaded images on desktop and laptop environments

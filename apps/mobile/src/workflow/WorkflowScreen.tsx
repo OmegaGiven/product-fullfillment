@@ -14,7 +14,7 @@ import { renderMessageTemplate } from "../messages/renderMessageTemplate";
 import { useAppTheme } from "../providers/AppearanceProvider";
 import { useServices } from "../providers/AppProviders";
 import type { AppTheme } from "../theme";
-import { createId, nowIso } from "../utils";
+import { createLocalRecordId, nowIso } from "../utils";
 
 type Props = {
   run: FulfillmentRun;
@@ -113,12 +113,12 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
   const matchedOrder =
     orders.find((order) => order.id === currentState.run.matchedOrderId) ?? null;
   const selectedMessageTemplateId =
-    typeof currentStep?.config.messageTemplateId === "string"
+    typeof currentStep?.config.messageTemplateId === "number"
       ? currentStep.config.messageTemplateId
       : workflow.steps.find(
             (step) =>
-              (step.type === "preview-message" || step.type === "approve-send") &&
-              typeof step.config.messageTemplateId === "string"
+              (step.type === "message-customer" || step.type === "approve-send") &&
+              typeof step.config.messageTemplateId === "number"
           )?.config.messageTemplateId;
   const selectedMessageTemplate =
     messageTemplates.find((template) => template.id === selectedMessageTemplateId) ?? null;
@@ -131,7 +131,7 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       ? currentStep.config.messagingTool
       : workflow.steps.find(
             (step) =>
-              (step.type === "preview-message" || step.type === "approve-send") &&
+              (step.type === "message-customer" || step.type === "approve-send") &&
               typeof step.config.messagingTool === "string"
           )?.config.messagingTool ?? "integration-message";
   const filteredOrders = orders.filter((order) => {
@@ -165,8 +165,8 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       }
 
       const photo: FulfillmentPhoto = {
-        id: createId("photo"),
-        runId: run.id,
+        id: createLocalRecordId(),
+        fulfillmentId: run.id,
         uri: result.assets[0].uri,
         label,
         createdAt: nowIso()
@@ -205,8 +205,17 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       }
 
       if (currentStep.type === "ocr-match") {
-        await ocrService.runOcr(run.id);
-        await matchService.findMatchCandidates(run.id);
+        if (!currentState.ocrExtraction || currentState.candidates.length === 0) {
+          await ocrService.runOcr(run.id);
+          await matchService.findMatchCandidates(run.id);
+          await refresh();
+          await onRunUpdated?.();
+          return;
+        }
+
+        if (!currentState.run.matchedOrderId) {
+          throw new Error("Review the match candidates and select the correct order before continuing.");
+        }
       }
 
       if (currentStep.type === "confirm-order" && !currentState.run.matchedOrderId) {
@@ -217,8 +226,13 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
         throw new Error("Select an order before continuing.");
       }
 
-      if (currentStep.type === "preview-message") {
-        await messageService.generateMessagePreview(run.id);
+      if (currentStep.type === "message-customer") {
+        if (!currentState.previewMessage) {
+          await messageService.generateMessagePreview(run.id);
+          await refresh();
+          await onRunUpdated?.();
+          return;
+        }
       }
 
       await workflowService.advanceStep(run.id);
@@ -230,6 +244,21 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       setIsBusy(false);
     }
   }
+
+  async function rerunOcrAndMatching() {
+    setIsBusy(true);
+    setError(null);
+    try {
+        await ocrService.runOcr(run.id);
+        await matchService.findMatchCandidates(run.id);
+        await refresh();
+        await onRunUpdated?.();
+      } catch (nextError) {
+        setError((nextError as Error).message);
+      } finally {
+        setIsBusy(false);
+      }
+    }
 
   async function handleBack() {
     if (currentState.run.currentStepIndex === 0) {
@@ -249,7 +278,7 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
     }
   }
 
-  async function chooseCandidate(orderId: string) {
+  async function chooseCandidate(orderId: number) {
     setIsBusy(true);
     setError(null);
     try {
@@ -359,46 +388,54 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
         </View>
       )}
 
-      {currentStep?.type === "ocr-match" ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>OCR And Label Detection</Text>
-          <Text style={styles.cardBody}>
-            OCR scans the captured photos, chooses the most label-like image, and extracts
-            recipient details for matching.
-          </Text>
-          {currentState.ocrExtraction ? (
-            <>
-              <Text style={styles.metaText}>
-                OCR confidence: {(currentState.ocrExtraction.confidence * 100).toFixed(0)}%
-              </Text>
-              <Text style={styles.compareTitle}>Parsed Recipient</Text>
-              <Text style={styles.compareValue}>
-                {formatRecipient(currentState.ocrExtraction.recipient)}
-              </Text>
-              <Text style={styles.compareTitle}>Extracted Text</Text>
-              <Text style={styles.compareValue}>{currentState.ocrExtraction.text}</Text>
-            </>
-          ) : (
-            <Text style={styles.metaText}>
-              Run this step to extract recipient text from the label photo packet.
-            </Text>
-          )}
-        </View>
-      ) : null}
-
-      {currentStep?.type === "confirm-order" ? (
+      {currentStep?.type === "ocr-match" || currentStep?.type === "confirm-order" ? (
         <>
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>OCR Extraction</Text>
-            <Text style={styles.metaText}>
-              Confidence:{" "}
-              {currentState.ocrExtraction
-                ? `${(currentState.ocrExtraction.confidence * 100).toFixed(0)}%`
-                : "Not available"}
+            <Text style={styles.cardTitle}>OCR Review</Text>
+            <Text style={styles.cardBody}>
+              OCR scans the captured photos, extracts recipient details, and lets you review and confirm the best order match before continuing.
             </Text>
-            <Text style={styles.compareValue}>
-              {formatRecipient(currentState.ocrExtraction?.recipient ?? null)}
-            </Text>
+            {currentState.ocrExtraction ? (
+              <>
+                <View style={styles.buttonRow}>
+                  <Pressable
+                    onPress={() => void rerunOcrAndMatching()}
+                    style={[styles.secondaryButton, isBusy ? styles.buttonDisabled : null]}
+                    disabled={isBusy}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {isBusy ? "Running..." : "Run OCR And Matching Again"}
+                    </Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.metaText}>
+                  Confidence: {(currentState.ocrExtraction.confidence * 100).toFixed(0)}%
+                </Text>
+                <Text style={styles.compareTitle}>Parsed Recipient</Text>
+                <Text style={styles.compareValue}>
+                  {formatRecipient(currentState.ocrExtraction.recipient)}
+                </Text>
+                <Text style={styles.compareTitle}>Extracted Text</Text>
+                <Text style={styles.compareValue}>{currentState.ocrExtraction.text}</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.metaText}>
+                  Run OCR to extract recipient text from the label photo packet, then review and confirm the best match here.
+                </Text>
+                <View style={styles.buttonRow}>
+                  <Pressable
+                    onPress={() => void rerunOcrAndMatching()}
+                    style={[styles.secondaryButton, isBusy ? styles.buttonDisabled : null]}
+                    disabled={isBusy}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {isBusy ? "Running..." : "Run OCR And Matching"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
           </View>
 
           <View style={styles.card}>
@@ -549,9 +586,9 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
         </>
       ) : null}
 
-      {currentStep?.type === "preview-message" || currentStep?.type === "approve-send" ? (
+      {currentStep?.type === "message-customer" || currentStep?.type === "approve-send" ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Message Preview</Text>
+          <Text style={styles.cardTitle}>Message Customer</Text>
           <Text style={styles.metaText}>Delivery path: {messagingTool}</Text>
           {selectedMessageTemplate ? (
             <View style={styles.compareCard}>
@@ -573,10 +610,13 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
               <Text style={styles.metaText}>Channel: {currentState.previewMessage.channel}</Text>
               <Text style={styles.metaText}>Subject: {currentState.previewMessage.subject}</Text>
               <Text style={styles.cardBody}>{currentState.previewMessage.body}</Text>
+              {currentState.previewMessage.status === "sent" ? (
+                <Text style={styles.metaText}>This customer message has already been sent.</Text>
+              ) : null}
             </>
           ) : (
             <Text style={styles.metaText}>
-              Generate the preview from the prior step. For email sends, the app currently hands off to the device mail composer; a server email provider can be added later behind the same message module.
+              Generate the message preview here, review it, and then send it from this same step. For email sends, the app currently hands off to the device mail composer; a server email provider can be added later behind the same message module.
             </Text>
           )}
         </View>
@@ -649,10 +689,22 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
           </Text>
         </Pressable>
 
-        {currentStep?.type === "approve-send" ? (
-          <Pressable onPress={approveAndSend} style={styles.primaryButton} disabled={isBusy}>
+        {currentStep?.type === "message-customer" || currentStep?.type === "approve-send" ? (
+          <Pressable
+            onPress={currentState.previewMessage ? approveAndSend : handleAdvance}
+            style={styles.primaryButton}
+            disabled={isBusy || currentState.previewMessage?.status === "sent"}
+          >
             <Text style={styles.primaryButtonText}>
-              {isBusy ? "Sending..." : "Approve And Send"}
+              {isBusy
+                ? currentState.previewMessage
+                  ? "Sending..."
+                  : "Preparing..."
+                : currentState.previewMessage
+                  ? currentState.previewMessage.status === "sent"
+                    ? "Sent"
+                    : "Message Customer"
+                  : "Prepare Message"}
             </Text>
           </Pressable>
         ) : (

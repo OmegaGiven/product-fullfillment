@@ -1,7 +1,10 @@
 import { z } from "zod";
 
-export const runIdSchema = z.union([z.number().int().positive(), z.string()]);
-export type RunId = z.infer<typeof runIdSchema>;
+export const recordIdSchema = z.number().int().positive();
+export type RecordId = z.infer<typeof recordIdSchema>;
+
+export const fulfillmentIdSchema = recordIdSchema;
+export type FulfillmentId = z.infer<typeof fulfillmentIdSchema>;
 
 export const executionModeSchema = z.enum(["local", "remote"]);
 export type ExecutionMode = z.infer<typeof executionModeSchema>;
@@ -13,7 +16,7 @@ export const stepTypeSchema = z.enum([
   "ocr-match",
   "select-order-manual",
   "confirm-order",
-  "preview-message",
+  "message-customer",
   "approve-send",
   "custom-checkpoint",
   "text-display",
@@ -37,8 +40,9 @@ export const addressSchema = z.object({
 export type Address = z.infer<typeof addressSchema>;
 
 export const importedOrderSchema = z.object({
-  id: z.string(),
-  integrationConnectionId: z.string().optional(),
+  id: recordIdSchema,
+  externalOrderId: z.string(),
+  integrationConnectionId: recordIdSchema.optional(),
   integrationConnectionName: z.string().optional(),
   integrationKey: z.string(),
   integrationName: z.string(),
@@ -52,8 +56,8 @@ export const importedOrderSchema = z.object({
 export type ImportedOrder = z.infer<typeof importedOrderSchema>;
 
 export const fulfillmentPhotoSchema = z.object({
-  id: z.string(),
-  runId: runIdSchema,
+  id: recordIdSchema,
+  fulfillmentId: fulfillmentIdSchema,
   uri: z.string(),
   label: z.enum(["product", "label"]),
   createdAt: z.string()
@@ -61,8 +65,8 @@ export const fulfillmentPhotoSchema = z.object({
 export type FulfillmentPhoto = z.infer<typeof fulfillmentPhotoSchema>;
 
 export const ocrExtractionSchema = z.object({
-  runId: runIdSchema,
-  sourcePhotoId: z.string().optional(),
+  fulfillmentId: fulfillmentIdSchema,
+  sourcePhotoId: recordIdSchema.optional(),
   text: z.string(),
   recipient: addressSchema.partial(),
   confidence: z.number()
@@ -70,14 +74,14 @@ export const ocrExtractionSchema = z.object({
 export type OcrExtraction = z.infer<typeof ocrExtractionSchema>;
 
 export const matchCandidateSchema = z.object({
-  orderId: z.string(),
+  orderId: recordIdSchema,
   confidence: z.number(),
   reasons: z.array(z.string())
 });
 export type MatchCandidate = z.infer<typeof matchCandidateSchema>;
 
 export const messageTemplateSchema = z.object({
-  id: z.string(),
+  id: recordIdSchema,
   name: z.string(),
   subject: z.string(),
   body: z.string()
@@ -85,8 +89,8 @@ export const messageTemplateSchema = z.object({
 export type MessageTemplate = z.infer<typeof messageTemplateSchema>;
 
 export const messageAttemptSchema = z.object({
-  id: z.string(),
-  runId: runIdSchema,
+  id: recordIdSchema,
+  fulfillmentId: fulfillmentIdSchema,
   channel: messageChannelSchema,
   status: z.enum(["pending", "approved", "sent", "blocked"]),
   subject: z.string(),
@@ -107,7 +111,7 @@ export const workflowStepSchema = z.object({
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
 
 export const workflowTemplateSchema = z.object({
-  id: z.string(),
+  id: recordIdSchema,
   name: z.string(),
   executionMode: executionModeSchema,
   stepOrder: z.array(z.string()),
@@ -116,7 +120,7 @@ export const workflowTemplateSchema = z.object({
 export type WorkflowTemplate = z.infer<typeof workflowTemplateSchema>;
 
 export const approvalRecordSchema = z.object({
-  runId: runIdSchema,
+  fulfillmentId: fulfillmentIdSchema,
   approvedAt: z.string().nullable(),
   approvedBy: z.string().nullable()
 });
@@ -130,15 +134,16 @@ export const workflowRunStepStateSchema = z.object({
 export type WorkflowRunStepState = z.infer<typeof workflowRunStepStateSchema>;
 
 export const fulfillmentRunSchema = z.object({
-  id: runIdSchema,
+  id: fulfillmentIdSchema,
   name: z.string(),
   executionMode: executionModeSchema,
-  workflowTemplateId: z.string(),
+  workflowTemplateId: recordIdSchema,
   currentStepIndex: z.number(),
   stepOrder: z.array(z.string()),
   status: z.enum(["draft", "in-progress", "review", "completed"]),
-  matchedOrderId: z.string().nullable(),
+  matchedOrderId: recordIdSchema.nullable(),
   selectedChannel: messageChannelSchema.nullable(),
+  touchedByUsers: z.array(z.string()).default([]),
   createdAt: z.string(),
   updatedAt: z.string()
 });

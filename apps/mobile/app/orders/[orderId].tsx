@@ -30,7 +30,8 @@ function formatAddress(order: {
 export default function OrderDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ orderId: string }>();
-  const orderId = Array.isArray(params.orderId) ? params.orderId[0] : params.orderId;
+  const orderIdValue = Array.isArray(params.orderId) ? params.orderId[0] : params.orderId;
+  const orderId = orderIdValue ? Number(orderIdValue) : undefined;
   const { theme } = useAppTheme();
   const styles = createStyles(theme);
   const { orders, isLoading } = useOrders();
@@ -81,12 +82,12 @@ export default function OrderDetailScreen() {
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Linked Workflow</Text>
-        {order.linkedRunId ? (
+        {order.linkedFulfillmentId ? (
           <Pressable
-            onPress={() => router.push(`/runs/${order.linkedRunId}`)}
+            onPress={() => router.push(`/runs/${order.linkedFulfillmentId}`)}
             style={styles.primaryButton}
           >
-            <Text style={styles.primaryButtonText}>Open Workflow #{order.linkedRunId}</Text>
+            <Text style={styles.primaryButtonText}>Open Workflow #{order.linkedFulfillmentId}</Text>
           </Pressable>
         ) : (
           <Text style={styles.metaText}>No fulfillment workflow linked yet.</Text>

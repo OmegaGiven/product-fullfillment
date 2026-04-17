@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "node ./scripts/smoke-test.mjs"
+    "test": "node ./scripts/smoke-test.mjs",
+    "seed:orders": "node ./scripts/seed-test-orders.mjs"
   },
   "dependencies": {
     "@react-native-ml-kit/text-recognition": "^2.0.0",

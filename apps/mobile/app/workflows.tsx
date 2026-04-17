@@ -23,7 +23,7 @@ export default function WorkflowsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"template" | "blank" | null>(null);
   const [workflowPendingDelete, setWorkflowPendingDelete] = useState<{
-    id: string;
+    id: number;
     name: string;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -138,7 +138,7 @@ export default function WorkflowsScreen() {
               </View>
             </View>
             <Text style={styles.workflowMeta}>Execution mode: {template.executionMode}</Text>
-            <Text style={styles.workflowMeta}>Template ID: {template.id}</Text>
+            <Text style={styles.workflowMeta}>Workflow ID: {template.id}</Text>
             <Text style={styles.workflowMeta}>
               Modules: {template.steps.map((step) => step.type).join(", ") || "None yet"}
             </Text>
@@ -221,12 +221,12 @@ function createStyles(theme: AppTheme) {
       borderColor: colors.border,
       borderRadius: radius.xl,
       borderWidth: 1,
-      gap: spacing.md,
-      padding: spacing.xl
+      gap: spacing.sm,
+      padding: spacing.lg
     },
     pageTitle: {
       color: colors.text,
-      fontSize: 24,
+      fontSize: 22,
       fontWeight: "700"
     },
     pageBody: {
@@ -243,7 +243,7 @@ function createStyles(theme: AppTheme) {
       backgroundColor: colors.accent,
       borderRadius: radius.md,
       paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.md
+      paddingVertical: spacing.sm
     },
     primaryButtonText: {
       color: colors.surfaceRaised,
@@ -256,7 +256,7 @@ function createStyles(theme: AppTheme) {
       borderRadius: radius.md,
       borderWidth: 1,
       paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.md
+      paddingVertical: spacing.sm
     },
     secondaryButtonText: {
       color: colors.text,
@@ -268,7 +268,7 @@ function createStyles(theme: AppTheme) {
     },
     sectionTitle: {
       color: colors.text,
-      fontSize: 20,
+      fontSize: 18,
       fontWeight: "700"
     },
     workflowCard: {
