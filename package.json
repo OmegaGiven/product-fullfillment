@@ -1,0 +1,17 @@
+{
+  "name": "product-fulfillment",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bash ./scripts/dev-start.sh",
+    "mobile:start": "npm --workspace apps/mobile run start",
+    "mobile:android": "npm --workspace apps/mobile run android",
+    "mobile:ios": "npm --workspace apps/mobile run ios",
+    "mobile:web": "npm --workspace apps/mobile run web",
+    "mobile:test": "npm --workspace apps/mobile run test",
+    "backend:dev": "npm --workspace apps/backend run start:dev"
+  }
+}

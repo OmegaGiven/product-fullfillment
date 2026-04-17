@@ -1,0 +1,36 @@
+{
+  "name": "@product-fulfillment/mobile",
+  "private": true,
+  "version": "0.1.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "test": "node ./scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "expo": "~52.0.0",
+    "expo-camera": "~16.0.0",
+    "expo-file-system": "~18.0.0",
+    "expo-image-picker": "~16.0.0",
+    "expo-mail-composer": "~14.0.0",
+    "expo-router": "~4.0.0",
+    "expo-secure-store": "~14.0.0",
+    "expo-sharing": "~13.0.0",
+    "expo-sqlite": "~15.0.0",
+    "react": "18.3.1",
+    "react-hook-form": "^7.53.0",
+    "react-native": "0.76.2",
+    "react-native-web": "^0.19.13",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.3",
+    "babel-plugin-module-resolver": "^5.0.3",
+    "typescript": "^5.6.3"
+  }
+}
