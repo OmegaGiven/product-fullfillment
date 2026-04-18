@@ -1,8 +1,9 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppNav } from "../src/components/AppNav";
+import { Pressable } from "../src/components/InteractivePressable";
 import { useBootstrapApp } from "../src/hooks/useBootstrapApp";
 import { useWorkflowTemplates } from "../src/hooks/useWorkflowTemplates";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
@@ -20,7 +21,6 @@ export default function WorkflowsScreen() {
   const styles = createStyles(theme);
   const { isReady, error: bootstrapError } = useBootstrapApp();
   const { templates, saveTemplate, deleteTemplate } = useWorkflowTemplates();
-  const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"template" | "blank" | null>(null);
   const [workflowPendingDelete, setWorkflowPendingDelete] = useState<{
     id: number;
@@ -30,7 +30,6 @@ export default function WorkflowsScreen() {
 
   async function createAndOpen(kind: "template" | "blank") {
     setBusyAction(kind);
-    setError(null);
 
     try {
       const workflow =
@@ -38,10 +37,10 @@ export default function WorkflowsScreen() {
           ? createWorkflowFromTemplate(templates.length)
           : createBlankWorkflow(templates.length);
       const saved = await saveTemplate(workflow);
-      showToast("Saved workflow");
+      showToast("Saved workflow", { variant: "success" });
       router.push(`/workflows/${saved.id}`);
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setBusyAction(null);
     }
@@ -53,14 +52,13 @@ export default function WorkflowsScreen() {
     }
 
     setIsDeleting(true);
-    setError(null);
 
     try {
       await deleteTemplate(workflowPendingDelete.id);
-      showToast("Deleted workflow");
+      showToast("Deleted workflow", { variant: "success" });
       setWorkflowPendingDelete(null);
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsDeleting(false);
     }
@@ -78,9 +76,9 @@ export default function WorkflowsScreen() {
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
       <AppNav title="Workflows" active="workflows" />
 
-      {bootstrapError || error ? (
+      {bootstrapError ? (
         <View style={styles.errorCard}>
-          <Text style={styles.errorText}>{bootstrapError?.message ?? error}</Text>
+          <Text style={styles.errorText}>{bootstrapError.message}</Text>
         </View>
       ) : null}
 

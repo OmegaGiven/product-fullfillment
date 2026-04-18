@@ -19,8 +19,9 @@ const baseRadius = {
 export const spacing = baseSpacing;
 export const radius = baseRadius;
 
-export type AppearanceMode = "light" | "dark";
+export type AppearanceMode = "light" | "dark" | "custom";
 export type AccentColor = string;
+export type BackgroundColor = string;
 
 type BaseColors = {
   background: string;
@@ -53,6 +54,7 @@ export type AppTheme = {
 export const defaultAppearance = {
   mode: "light" as AppearanceMode,
   accentColor: "#c56f2a" as AccentColor,
+  backgroundColor: null as BackgroundColor | null,
   radiusScale: 1,
   spacingScale: 1
 };
@@ -86,6 +88,16 @@ const darkBase: BaseColors = {
   danger: "#df7d6e",
   dangerSoft: "#3a221d"
 };
+
+function getRelativeLuminance(hex: string) {
+  const { r, g, b } = hexToRgb(hex);
+  const normalize = (channel: number) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+
+  return 0.2126 * normalize(r) + 0.7152 * normalize(g) + 0.0722 * normalize(b);
+}
 
 type Rgb = {
   r: number;
@@ -149,17 +161,51 @@ export function buildTheme(
   mode: AppearanceMode = defaultAppearance.mode,
   accentColor: AccentColor = defaultAppearance.accentColor,
   spacingScale = defaultAppearance.spacingScale,
-  radiusScale = defaultAppearance.radiusScale
+  radiusScale = defaultAppearance.radiusScale,
+  backgroundColor: BackgroundColor | null = defaultAppearance.backgroundColor
 ): AppTheme {
-  const base = mode === "dark" ? darkBase : lightBase;
+  const presetMode =
+    mode === "custom"
+      ? getRelativeLuminance(backgroundColor ?? lightBase.background) < 0.38
+        ? "dark"
+        : "light"
+      : mode;
+  const base = presetMode === "dark" ? darkBase : lightBase;
+  const resolvedBackground = mode === "custom" ? backgroundColor ?? base.background : base.background;
+  const resolvedBackgroundAccent =
+    presetMode === "dark"
+      ? mix(resolvedBackground, "#ffffff", 0.05)
+      : mix(resolvedBackground, "#000000", 0.04);
+  const resolvedSurface =
+    presetMode === "dark"
+      ? mix(resolvedBackground, "#ffffff", 0.06)
+      : mix(resolvedBackground, "#ffffff", 0.6);
+  const resolvedSurfaceRaised =
+    presetMode === "dark"
+      ? mix(resolvedBackground, "#ffffff", 0.1)
+      : mix(resolvedBackground, "#ffffff", 0.8);
+  const resolvedBorder =
+    presetMode === "dark"
+      ? mix(resolvedBackground, "#ffffff", 0.18)
+      : mix(resolvedBackground, "#000000", 0.12);
+  const resolvedBorderStrong =
+    presetMode === "dark"
+      ? mix(resolvedBackground, "#ffffff", 0.32)
+      : mix(resolvedBackground, "#000000", 0.24);
 
   return {
     colors: {
       ...base,
-      primary: darken(accentColor, mode === "dark" ? 0.08 : 0.18),
-      primaryDark: darken(accentColor, mode === "dark" ? 0.24 : 0.36),
+      background: resolvedBackground,
+      backgroundAccent: resolvedBackgroundAccent,
+      surface: resolvedSurface,
+      surfaceRaised: resolvedSurfaceRaised,
+      border: resolvedBorder,
+      borderStrong: resolvedBorderStrong,
+      primary: darken(accentColor, presetMode === "dark" ? 0.08 : 0.18),
+      primaryDark: darken(accentColor, presetMode === "dark" ? 0.24 : 0.36),
       accent: accentColor,
-      accentSoft: soften(accentColor, mode)
+      accentSoft: soften(accentColor, presetMode)
     },
     radius: scaleRecord(baseRadius, radiusScale),
     spacing: scaleRecord(baseSpacing, spacingScale)

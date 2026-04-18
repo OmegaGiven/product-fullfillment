@@ -1,8 +1,12 @@
 import { useRouter } from "expo-router";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useState } from "react";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 
 import { AppNav } from "../src/components/AppNav";
+import { Pressable } from "../src/components/InteractivePressable";
+import { useColumnVisibility } from "../src/hooks/useColumnVisibility";
 import { useBootstrapApp } from "../src/hooks/useBootstrapApp";
 import { useFulfillmentRuns } from "../src/hooks/useFulfillmentRuns";
 import { useWorkflowTemplates } from "../src/hooks/useWorkflowTemplates";
@@ -11,12 +15,91 @@ import { useToast } from "../src/providers/ToastProvider";
 import type { RecordId } from "../src/domain";
 import type { AppTheme } from "../src/theme";
 
+type FulfillmentColumnKey =
+  | "fulfillmentId"
+  | "workflowId"
+  | "status"
+  | "step"
+  | "mode"
+  | "matched"
+  | "channel"
+  | "created"
+  | "updated"
+  | "actions";
+
+const FULFILLMENT_COLUMN_LABELS: Record<FulfillmentColumnKey, string> = {
+  fulfillmentId: "Fulfillment ID",
+  workflowId: "Workflow ID",
+  status: "Status",
+  step: "Step",
+  mode: "Mode",
+  matched: "Matched",
+  channel: "Channel",
+  created: "Created",
+  updated: "Updated",
+  actions: "Actions"
+};
+
+const DEFAULT_FULFILLMENT_COLUMN_VISIBILITY: Record<FulfillmentColumnKey, boolean> = {
+  fulfillmentId: true,
+  workflowId: true,
+  status: true,
+  step: true,
+  mode: true,
+  matched: true,
+  channel: true,
+  created: true,
+  updated: true,
+  actions: true
+};
+
 function formatRunTitle(
   workflowName: string | undefined,
   runName: string,
   fulfillmentId: RecordId
 ) {
   return `${workflowName ?? runName}: #${fulfillmentId}`;
+}
+
+function escapeCsvValue(value: string) {
+  const normalized = value.replace(/\r?\n/g, " ").replace(/"/g, '""');
+  return `"${normalized}"`;
+}
+
+function buildFulfillmentExportCsv(
+  runs: ReturnType<typeof useFulfillmentRuns>["runs"],
+  visibleColumns: FulfillmentColumnKey[]
+) {
+  const exportableColumns = visibleColumns.filter((column) => column !== "actions");
+  const header = exportableColumns.map((column) => FULFILLMENT_COLUMN_LABELS[column]);
+  const rows = runs.map((run) =>
+    exportableColumns.map((column) => {
+      switch (column) {
+        case "fulfillmentId":
+          return run.id;
+        case "workflowId":
+          return run.workflowTemplateId;
+        case "status":
+          return run.status;
+        case "step":
+          return `${run.currentStepIndex + 1} / ${run.stepOrder.length}`;
+        case "mode":
+          return run.executionMode;
+        case "matched":
+          return run.matchedOrderId ?? "No";
+        case "channel":
+          return run.selectedChannel ?? "None";
+        case "created":
+          return run.createdAt;
+        case "updated":
+          return run.updatedAt;
+      }
+    })
+  );
+
+  return [header, ...rows]
+    .map((row) => row.map((value) => escapeCsvValue(String(value))).join(","))
+    .join("\n");
 }
 
 export default function HistoryScreen() {
@@ -32,6 +115,8 @@ export default function HistoryScreen() {
     title: string;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [filters, setFilters] = useState({
     fulfillmentId: "",
     workflowId: "",
@@ -60,6 +145,11 @@ export default function HistoryScreen() {
     key: null,
     direction: null
   });
+  const { visibility, visibleColumnKeys, toggleColumn } =
+    useColumnVisibility<FulfillmentColumnKey>(
+      "fulfillments-column-visibility",
+      DEFAULT_FULFILLMENT_COLUMN_VISIBILITY
+    );
 
   const filteredRuns = runs.filter((run) => {
     const workflow = templates.find((template) => template.id === run.workflowTemplateId);
@@ -177,6 +267,52 @@ export default function HistoryScreen() {
     }
   }
 
+  async function handleExport() {
+    if (sortedRuns.length === 0) {
+      showToast("There are no fulfillments to export.", { variant: "error", durationMs: 4200 });
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const csv = buildFulfillmentExportCsv(sortedRuns, visibleColumnKeys);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `fulfillments-export-${timestamp}.csv`;
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } else {
+        const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(fileUri, csv, {
+          encoding: FileSystem.EncodingType.UTF8
+        });
+
+        if (!(await Sharing.isAvailableAsync())) {
+          throw new Error("Export sharing is not available on this device.");
+        }
+
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "text/csv",
+          dialogTitle: "Export filtered fulfillments",
+          UTI: "public.comma-separated-values-text"
+        });
+      }
+      showToast("Fulfillments export is ready.", { variant: "success" });
+    } catch (nextError) {
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   if (!isReady) {
     return (
       <View style={styles.centered}>
@@ -198,6 +334,19 @@ export default function HistoryScreen() {
 
       <View style={styles.filterActionsRow}>
         <View style={styles.filterButtons}>
+          <Pressable
+            onPress={() => setIsCustomizeOpen(true)}
+            style={styles.clearButton}
+          >
+            <Text style={styles.clearButtonText}>Columns</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => void handleExport()}
+            style={[styles.clearButton, isExporting ? styles.buttonDisabled : null]}
+            disabled={isExporting}
+          >
+            <Text style={styles.clearButtonText}>{isExporting ? "Exporting..." : "Export"}</Text>
+          </Pressable>
           <Pressable
             onPress={() =>
               setFilters({
@@ -262,64 +411,64 @@ export default function HistoryScreen() {
           >
             <View style={styles.tableInner}>
               <View style={[styles.tableRow, styles.tableHeaderRow]}>
-                <Pressable
+                {visibility.fulfillmentId ? <Pressable
                   onPress={() => toggleSort("fulfillmentId")}
                   style={[styles.tableCell, styles.cellRunId, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Fulfillment ID{getSortArrow("fulfillmentId")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.workflowId ? <Pressable
                   onPress={() => toggleSort("workflowId")}
                   style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Workflow ID{getSortArrow("workflowId")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.status ? <Pressable
                   onPress={() => toggleSort("status")}
                   style={[styles.tableCell, styles.cellStatus, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Status{getSortArrow("status")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.step ? <Pressable
                   onPress={() => toggleSort("step")}
                   style={[styles.tableCell, styles.cellStep, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Step{getSortArrow("step")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.mode ? <Pressable
                   onPress={() => toggleSort("mode")}
                   style={[styles.tableCell, styles.cellMode, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Mode{getSortArrow("mode")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.matched ? <Pressable
                   onPress={() => toggleSort("matched")}
                   style={[styles.tableCell, styles.cellMatch, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Matched{getSortArrow("matched")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.channel ? <Pressable
                   onPress={() => toggleSort("channel")}
                   style={[styles.tableCell, styles.cellChannel, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Channel{getSortArrow("channel")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.created ? <Pressable
                   onPress={() => toggleSort("created")}
                   style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Created{getSortArrow("created")}</Text>
-                </Pressable>
-                <Pressable
+                </Pressable> : null}
+                {visibility.updated ? <Pressable
                   onPress={() => toggleSort("updated")}
                   style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
                 >
                   <Text style={styles.tableHeaderText}>Updated{getSortArrow("updated")}</Text>
-                </Pressable>
-                <Text style={[styles.tableCell, styles.cellActions, styles.tableHeaderText]}>Actions</Text>
+                </Pressable> : null}
+                {visibility.actions ? <Text style={[styles.tableCell, styles.cellActions, styles.tableHeaderText]}>Actions</Text> : null}
               </View>
               <View style={[styles.tableRow, styles.tableFilterRow]}>
-                <View style={[styles.tableCell, styles.cellRunId]}>
+                {visibility.fulfillmentId ? <View style={[styles.tableCell, styles.cellRunId]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, fulfillmentId: value }))}
                     placeholder="Filter"
@@ -327,8 +476,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.fulfillmentId}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellWorkflow]}>
+                </View> : null}
+                {visibility.workflowId ? <View style={[styles.tableCell, styles.cellWorkflow]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, workflowId: value }))}
                     placeholder="Filter"
@@ -336,8 +485,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.workflowId}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellStatus]}>
+                </View> : null}
+                {visibility.status ? <View style={[styles.tableCell, styles.cellStatus]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, status: value }))}
                     placeholder="Filter"
@@ -345,8 +494,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.status}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellStep]}>
+                </View> : null}
+                {visibility.step ? <View style={[styles.tableCell, styles.cellStep]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, step: value }))}
                     placeholder="Filter"
@@ -354,8 +503,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.step}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellMode]}>
+                </View> : null}
+                {visibility.mode ? <View style={[styles.tableCell, styles.cellMode]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, mode: value }))}
                     placeholder="Filter"
@@ -363,8 +512,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.mode}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellMatch]}>
+                </View> : null}
+                {visibility.matched ? <View style={[styles.tableCell, styles.cellMatch]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, matched: value }))}
                     placeholder="Filter"
@@ -372,8 +521,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.matched}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellChannel]}>
+                </View> : null}
+                {visibility.channel ? <View style={[styles.tableCell, styles.cellChannel]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, channel: value }))}
                     placeholder="Filter"
@@ -381,8 +530,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.channel}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellDate]}>
+                </View> : null}
+                {visibility.created ? <View style={[styles.tableCell, styles.cellDate]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, created: value }))}
                     placeholder="MM/DD/YYYY"
@@ -390,8 +539,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.created}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellDate]}>
+                </View> : null}
+                {visibility.updated ? <View style={[styles.tableCell, styles.cellDate]}>
                   <TextInput
                     onChangeText={(value) => setFilters((current) => ({ ...current, updated: value }))}
                     placeholder="MM/DD/YYYY"
@@ -399,8 +548,8 @@ export default function HistoryScreen() {
                     style={styles.filterInput}
                     value={filters.updated}
                   />
-                </View>
-                <View style={[styles.tableCell, styles.cellActions]} />
+                </View> : null}
+                {visibility.actions ? <View style={[styles.tableCell, styles.cellActions]} /> : null}
               </View>
 
               {sortedRuns.map((run, index) => {
@@ -414,28 +563,28 @@ export default function HistoryScreen() {
                       index % 2 === 1 ? styles.tableRowAlt : null
                     ]}
                   >
-                    <View style={[styles.tableCell, styles.cellRunId]}>
+                    {visibility.fulfillmentId ? <View style={[styles.tableCell, styles.cellRunId]}>
                       <Text style={styles.cellPrimaryText}>
                         {String(run.id)}
                       </Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellWorkflow]}>
+                    </View> : null}
+                    {visibility.workflowId ? <View style={[styles.tableCell, styles.cellWorkflow]}>
                       <Text style={styles.cellPrimaryText}>
                         {run.workflowTemplateId}
                       </Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellStatus]}>
+                    </View> : null}
+                    {visibility.status ? <View style={[styles.tableCell, styles.cellStatus]}>
                       <Text style={styles.cellPrimaryText}>{run.status}</Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellStep]}>
+                    </View> : null}
+                    {visibility.step ? <View style={[styles.tableCell, styles.cellStep]}>
                       <Text style={styles.cellPrimaryText}>
                         {run.currentStepIndex + 1} / {run.stepOrder.length}
                       </Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellMode]}>
+                    </View> : null}
+                    {visibility.mode ? <View style={[styles.tableCell, styles.cellMode]}>
                       <Text style={styles.cellPrimaryText}>{run.executionMode}</Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellMatch]}>
+                    </View> : null}
+                    {visibility.matched ? <View style={[styles.tableCell, styles.cellMatch]}>
                       {run.matchedOrderId ? (
                         <Pressable
                           onPress={() => router.push(`/orders/${run.matchedOrderId}`)}
@@ -446,21 +595,21 @@ export default function HistoryScreen() {
                       ) : (
                         <Text style={styles.cellPrimaryText}>No</Text>
                       )}
-                    </View>
-                    <View style={[styles.tableCell, styles.cellChannel]}>
+                    </View> : null}
+                    {visibility.channel ? <View style={[styles.tableCell, styles.cellChannel]}>
                       <Text style={styles.cellPrimaryText}>{run.selectedChannel ?? "None"}</Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellDate]}>
+                    </View> : null}
+                    {visibility.created ? <View style={[styles.tableCell, styles.cellDate]}>
                       <Text style={styles.cellPrimaryText}>
                         {new Date(run.createdAt).toLocaleString()}
                       </Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellDate]}>
+                    </View> : null}
+                    {visibility.updated ? <View style={[styles.tableCell, styles.cellDate]}>
                       <Text style={styles.cellPrimaryText}>
                         {new Date(run.updatedAt).toLocaleString()}
                       </Text>
-                    </View>
-                    <View style={[styles.tableCell, styles.cellActions]}>
+                    </View> : null}
+                    {visibility.actions ? <View style={[styles.tableCell, styles.cellActions]}>
                       <Pressable
                         onPress={() => router.push(`/runs/${run.id}`)}
                         style={styles.openButton}
@@ -478,7 +627,7 @@ export default function HistoryScreen() {
                       >
                         <Text style={styles.deleteButtonText}>Delete</Text>
                       </Pressable>
-                    </View>
+                    </View> : null}
                   </View>
                 );
               })}
@@ -521,6 +670,34 @@ export default function HistoryScreen() {
                 </Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isCustomizeOpen}
+        onRequestClose={() => setIsCustomizeOpen(false)}
+      >
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <Text style={styles.errorTitle}>Columns</Text>
+            <View style={styles.filterButtons}>
+              {(Object.keys(DEFAULT_FULFILLMENT_COLUMN_VISIBILITY) as FulfillmentColumnKey[]).map((columnKey) => (
+                <Pressable
+                  key={`fulfillment-column:${columnKey}`}
+                  onPress={() => void toggleColumn(columnKey)}
+                  style={[styles.openButton, visibility[columnKey] ? styles.columnOptionActive : null]}
+                >
+                  <Text style={styles.openButtonText}>
+                    {FULFILLMENT_COLUMN_LABELS[columnKey]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Pressable onPress={() => setIsCustomizeOpen(false)} style={styles.openButton}>
+              <Text style={styles.openButtonText}>Close</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -588,18 +765,26 @@ function createStyles(theme: AppTheme) {
       justifyContent: "flex-end",
       marginLeft: "auto"
     },
+    buttonDisabled: {
+      opacity: 0.65
+    },
     clearButton: {
+      alignItems: "center",
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.borderStrong,
       borderRadius: radius.pill,
       borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 32,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs + 2
     },
     clearButtonText: {
       color: colors.text,
       fontSize: 13,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 13,
+      textAlignVertical: "center"
     },
     statCard: {
       backgroundColor: colors.surfaceRaised,
@@ -760,13 +945,20 @@ function createStyles(theme: AppTheme) {
       borderRadius: radius.md,
       borderWidth: 1,
       justifyContent: "center",
+      minHeight: 36,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm
     },
     openButtonText: {
       color: colors.text,
       fontSize: 14,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 14,
+      textAlignVertical: "center"
+    },
+    columnOptionActive: {
+      backgroundColor: colors.accentSoft,
+      borderColor: colors.accent
     },
     deleteButton: {
       alignItems: "center",
@@ -775,13 +967,16 @@ function createStyles(theme: AppTheme) {
       borderRadius: radius.md,
       borderWidth: 1,
       justifyContent: "center",
+      minHeight: 36,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm
     },
     deleteButtonText: {
       color: colors.danger,
       fontSize: 14,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 14,
+      textAlignVertical: "center"
     },
     modalScrim: {
       alignItems: "center",

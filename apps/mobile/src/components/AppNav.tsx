@@ -1,7 +1,8 @@
 import { useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import { NAV_PAGE_LABELS, type NavKey } from "../accessControl/accessControl";
+import { Pressable } from "./InteractivePressable";
 import { useAccessControl } from "../providers/AccessControlProvider";
 import { useAppTheme } from "../providers/AppearanceProvider";
 import type { AppTheme } from "../theme";

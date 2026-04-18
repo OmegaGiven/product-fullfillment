@@ -1,11 +1,10 @@
-import * as MailComposer from "expo-mail-composer";
-
 import type { FulfillmentId, MessageTemplate } from "../../domain";
 import { renderMessageTemplate } from "../../messages/renderMessageTemplate";
 import type { MessageService } from "../interfaces";
 import { createLocalRecordId, nowIso } from "../../utils";
 
 import type { LocalStorageService } from "./localStorageService";
+import { logApiEvent } from "./apiLogger";
 import { seededTemplates } from "./seedData";
 
 export class LocalMessageService implements MessageService {
@@ -36,6 +35,9 @@ export class LocalMessageService implements MessageService {
   }
 
   async generateMessagePreview(fulfillmentId: FulfillmentId) {
+    logApiEvent("message", "generateMessagePreview", "request", {
+      fulfillmentId
+    });
     const state = await this.storageService.getRunState(fulfillmentId);
     if (!state) {
       throw new Error("Fulfillment run not found.");
@@ -77,10 +79,21 @@ export class LocalMessageService implements MessageService {
       previewMessage: preview
     });
 
+    logApiEvent("message", "generateMessagePreview", "response", {
+      fulfillmentId,
+      orderId: order.id,
+      channel: preview.channel,
+      status: preview.status,
+      subject: preview.subject
+    });
     return preview;
   }
 
   async approveAndSend(fulfillmentId: FulfillmentId, channel: "integration-message" | "email" | "manual") {
+    logApiEvent("message", "approveAndSend", "request", {
+      fulfillmentId,
+      channel
+    });
     const state = await this.storageService.getRunState(fulfillmentId);
     if (!state || !state.previewMessage) {
       throw new Error("Generate a preview before sending.");
@@ -95,6 +108,12 @@ export class LocalMessageService implements MessageService {
     let status: "approved" | "sent" | "blocked" = "approved";
 
     if (channel === "email") {
+      const MailComposer = await import("expo-mail-composer");
+      logApiEvent("message", "emailCompose", "request", {
+        fulfillmentId,
+        recipients: order.buyerEmail ? [order.buyerEmail] : [],
+        subject: state.previewMessage.subject
+      });
       await MailComposer.composeAsync({
         recipients: order.buyerEmail ? [order.buyerEmail] : [],
         subject: state.previewMessage.subject,
@@ -128,6 +147,13 @@ export class LocalMessageService implements MessageService {
     };
 
     await this.storageService.saveRunState(nextState);
+    logApiEvent("message", "approveAndSend", "response", {
+      fulfillmentId,
+      orderId: order.id,
+      channel,
+      status,
+      runStatus: nextState.run.status
+    });
     return nextState;
   }
 }

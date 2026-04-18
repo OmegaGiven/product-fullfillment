@@ -1,9 +1,10 @@
 import { useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import {
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import {
 } from "react-native";
 
 import { AppNav } from "../src/components/AppNav";
+import { Pressable } from "../src/components/InteractivePressable";
 import {
   NAV_KEYS,
   NAV_PAGE_LABELS,
@@ -21,7 +23,7 @@ import {
 import { useAccessControl } from "../src/providers/AccessControlProvider";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
 import { useToast } from "../src/providers/ToastProvider";
-import type { AccentColor, AppTheme } from "../src/theme";
+import type { AccentColor, AppTheme, BackgroundColor } from "../src/theme";
 
 const ACCENT_WHEEL: AccentColor[] = [
   "#ff5a5f",
@@ -167,6 +169,17 @@ function describeRadiusScale(value: number) {
   return "Default";
 }
 
+function formatAccessLevel(level: PageAccessLevel) {
+  switch (level) {
+    case "hidden":
+      return "Hidden";
+    case "read":
+      return "Read";
+    case "action":
+      return "Write";
+  }
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const {
@@ -186,9 +199,11 @@ export default function SettingsScreen() {
   } = useAccessControl();
   const {
     accentColor,
+    backgroundColor,
     mode,
     radiusScale,
     setAccentColor,
+    setBackgroundColor,
     setMode,
     setRadiusScale,
     setSpacingScale,
@@ -198,17 +213,44 @@ export default function SettingsScreen() {
   const { showToast } = useToast();
   const { colors } = theme;
   const styles = createStyles(theme);
-  const [isAccentModalOpen, setIsAccentModalOpen] = useState(false);
+  const [activeColorEditor, setActiveColorEditor] = useState<"accent" | "background" | null>(null);
   const [pendingAccentColor, setPendingAccentColor] = useState<AccentColor>(accentColor);
+  const [pendingBackgroundColor, setPendingBackgroundColor] = useState<BackgroundColor>(
+    backgroundColor ?? colors.background
+  );
   const [pickerHue, setPickerHue] = useState(hexToHsv(accentColor).h);
   const [pickerSaturation, setPickerSaturation] = useState(hexToHsv(accentColor).s);
   const [pickerValue, setPickerValue] = useState(hexToHsv(accentColor).v);
+  const [spacingTrackWidth, setSpacingTrackWidth] = useState(0);
+  const [radiusTrackWidth, setRadiusTrackWidth] = useState(0);
   const colorAreaRef = useRef<HTMLDivElement | null>(null);
   const hueSliderRef = useRef<HTMLDivElement | null>(null);
 
-  async function applyAccentColor() {
-    await setAccentColor(normalizeHexColor(pendingAccentColor));
-    setIsAccentModalOpen(false);
+  const currentEditorColor =
+    activeColorEditor === "background" ? pendingBackgroundColor : pendingAccentColor;
+
+  function openColorEditor(target: "accent" | "background") {
+    const sourceColor =
+      target === "background" ? normalizeHexColor(backgroundColor ?? colors.background) : normalizeHexColor(accentColor);
+    const nextHsv = hexToHsv(sourceColor);
+    setPickerHue(nextHsv.h);
+    setPickerSaturation(nextHsv.s);
+    setPickerValue(nextHsv.v);
+    if (target === "background") {
+      setPendingBackgroundColor(sourceColor);
+    } else {
+      setPendingAccentColor(sourceColor);
+    }
+    setActiveColorEditor(target);
+  }
+
+  async function applyColorSelection() {
+    if (activeColorEditor === "background") {
+      await setBackgroundColor(normalizeHexColor(pendingBackgroundColor));
+    } else {
+      await setAccentColor(normalizeHexColor(pendingAccentColor));
+    }
+    setActiveColorEditor(null);
     showToast("Saved appearance");
   }
 
@@ -216,10 +258,15 @@ export default function SettingsScreen() {
     const nextHue = clampUnit(hue);
     const nextSaturation = clampUnit(saturation);
     const nextValue = clampUnit(value);
+    const nextHex = hsvToHex(nextHue, nextSaturation, nextValue);
     setPickerHue(nextHue);
     setPickerSaturation(nextSaturation);
     setPickerValue(nextValue);
-    setPendingAccentColor(hsvToHex(nextHue, nextSaturation, nextValue));
+    if (activeColorEditor === "background") {
+      setPendingBackgroundColor(nextHex);
+      return;
+    }
+    setPendingAccentColor(nextHex);
   }
 
   function startDrag(
@@ -264,6 +311,26 @@ export default function SettingsScreen() {
     updatePickerColor(hue, pickerSaturation, pickerValue);
   }
 
+  function resolveScaleFromTrackPress(
+    event: GestureResponderEvent,
+    width: number,
+    min: number,
+    max: number
+  ) {
+    if (width <= 0) {
+      return min;
+    }
+
+    const ratio = clampUnit(event.nativeEvent.locationX / width);
+    return min + ratio * (max - min);
+  }
+
+  function handleTrackLayout(setter: (width: number) => void) {
+    return (event: LayoutChangeEvent) => {
+      setter(event.nativeEvent.layout.width);
+    };
+  }
+
   return (
     <>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
@@ -300,7 +367,7 @@ export default function SettingsScreen() {
             Choose which top navigation tabs are visible for this device user. Tickers let you quickly hide or show pages without changing the underlying role permissions.
           </Text>
           <View style={styles.permissionGrid}>
-            {NAV_KEYS.map((page) => {
+            {NAV_KEYS.filter((page) => page !== "user").map((page) => {
               const isVisible = personalNavVisibility[page];
               return (
                 <Pressable
@@ -324,8 +391,11 @@ export default function SettingsScreen() {
             })}
           </View>
           <Text style={styles.metaText}>
+            The User tab always stays visible so settings and access controls cannot be hidden accidentally.
+          </Text>
+          <Text style={styles.metaText}>
             Effective position: {activePosition?.name ?? "None"} • Current page access on
-            settings: {currentPageAccess("user")}
+            settings: {formatAccessLevel(currentPageAccess("user"))}
           </Text>
         </View>
 
@@ -352,7 +422,7 @@ export default function SettingsScreen() {
             </View>
           </View>
           <Text style={styles.metaText}>
-            Create named positions for your organization and decide whether each page is hidden, read-only, or action-enabled.
+            Create named positions for your organization and decide whether each page is hidden, read-only, or write-enabled.
           </Text>
           <View style={styles.positionSelectorRow}>
             {positions.map((position) => {
@@ -412,7 +482,10 @@ export default function SettingsScreen() {
               <View key={`${position.id}:${page}`} style={styles.permissionRow}>
                 <Text style={styles.permissionPageLabel}>{NAV_PAGE_LABELS[page]}</Text>
                 <View style={styles.permissionGrid}>
-                  {(["hidden", "read", "action"] as PageAccessLevel[]).map((level) => {
+                  {(page === "user"
+                    ? (["read", "action"] as PageAccessLevel[])
+                    : (["hidden", "read", "action"] as PageAccessLevel[])
+                  ).map((level) => {
                     const isActive = position.pageAccess[page] === level;
                     return (
                       <Pressable
@@ -426,7 +499,7 @@ export default function SettingsScreen() {
                             isActive ? styles.permissionChipTextActive : null
                           ]}
                         >
-                          {level}
+                          {formatAccessLevel(level)}
                         </Text>
                       </Pressable>
                     );
@@ -476,7 +549,52 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => setIsAccentModalOpen(true)}
+              onPress={() => {
+                if (backgroundColor) {
+                  void setMode("custom");
+                }
+              }}
+              style={[
+                styles.modeButton,
+                styles.appearanceModeButton,
+                mode === "custom" ? styles.modeButtonActive : null,
+                !backgroundColor ? styles.buttonDisabled : null
+              ]}
+              disabled={!backgroundColor}
+            >
+              <Text
+                style={[
+                  styles.modeButtonText,
+                  mode === "custom" ? styles.modeButtonTextActive : null
+                ]}
+              >
+                Custom
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => openColorEditor("background")}
+              style={[styles.accentPreviewCard, styles.modeAccentButton]}
+            >
+              <View style={styles.accentPreviewHeader}>
+                <Text style={styles.accentPreviewLabel}>Background Color</Text>
+                <View style={styles.accentPreviewBar}>
+                  <View
+                    style={[
+                      styles.accentPreviewBarPrimary,
+                      { backgroundColor: normalizeHexColor(backgroundColor ?? colors.background) }
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.accentPreviewBarAccent,
+                      { backgroundColor: colors.surfaceRaised }
+                    ]}
+                  />
+                </View>
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={() => openColorEditor("accent")}
               style={[styles.accentPreviewCard, styles.modeAccentButton]}
             >
               <View style={styles.accentPreviewHeader}>
@@ -488,7 +606,6 @@ export default function SettingsScreen() {
               </View>
             </Pressable>
           </View>
-
           <View style={styles.appearanceControlsGrid}>
             <View style={styles.appearanceControlCard}>
               <View style={styles.appearanceControlHeader}>
@@ -508,7 +625,22 @@ export default function SettingsScreen() {
                 >
                   <Text style={styles.stepperButtonText}>-</Text>
                 </Pressable>
-                <View style={styles.appearanceTrack}>
+                <Pressable
+                  onLayout={handleTrackLayout(setSpacingTrackWidth)}
+                  onPress={(event) =>
+                    void setSpacingScale(
+                      clampSpacingScale(
+                        resolveScaleFromTrackPress(
+                          event,
+                          spacingTrackWidth,
+                          MIN_SPACING_SCALE,
+                          MAX_APPEARANCE_SCALE
+                        )
+                      )
+                    )
+                  }
+                  style={styles.appearanceTrack}
+                >
                   <View
                     style={[
                       styles.appearanceTrackFill,
@@ -519,7 +651,7 @@ export default function SettingsScreen() {
                       }
                     ]}
                   />
-                </View>
+                </Pressable>
                 <Pressable
                   onPress={() =>
                     void setSpacingScale(
@@ -549,7 +681,22 @@ export default function SettingsScreen() {
                 >
                   <Text style={styles.stepperButtonText}>-</Text>
                 </Pressable>
-                <View style={styles.appearanceTrack}>
+                <Pressable
+                  onLayout={handleTrackLayout(setRadiusTrackWidth)}
+                  onPress={(event) =>
+                    void setRadiusScale(
+                      clampRadiusScale(
+                        resolveScaleFromTrackPress(
+                          event,
+                          radiusTrackWidth,
+                          MIN_RADIUS_SCALE,
+                          MAX_APPEARANCE_SCALE
+                        )
+                      )
+                    )
+                  }
+                  style={styles.appearanceTrack}
+                >
                   <View
                     style={[
                       styles.appearanceTrackFill,
@@ -560,7 +707,7 @@ export default function SettingsScreen() {
                       }
                     ]}
                   />
-                </View>
+                </Pressable>
                 <Pressable
                   onPress={() =>
                     void setRadiusScale(clampRadiusScale(radiusScale + APPEARANCE_SCALE_STEP))
@@ -584,14 +731,16 @@ export default function SettingsScreen() {
       <Modal
         animationType="fade"
         transparent
-        visible={isAccentModalOpen}
-        onRequestClose={() => setIsAccentModalOpen(false)}
+        visible={activeColorEditor !== null}
+        onRequestClose={() => setActiveColorEditor(null)}
       >
         <View style={styles.modalScrim}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.cardTitle}>Accent Color</Text>
-              <Pressable onPress={() => setIsAccentModalOpen(false)} style={styles.closeButton}>
+              <Text style={styles.cardTitle}>
+                {activeColorEditor === "background" ? "Background Color" : "Accent Color"}
+              </Text>
+              <Pressable onPress={() => setActiveColorEditor(null)} style={styles.closeButton}>
                 <Text style={styles.closeButtonText}>Close</Text>
               </Pressable>
             </View>
@@ -665,10 +814,10 @@ export default function SettingsScreen() {
                   <View
                     style={[
                       styles.webPickerPreview,
-                      { backgroundColor: normalizeHexColor(pendingAccentColor) }
+                      { backgroundColor: normalizeHexColor(currentEditorColor) }
                     ]}
                   />
-                  <Text style={styles.metaText}>{normalizeHexColor(pendingAccentColor)}</Text>
+                  <Text style={styles.metaText}>{normalizeHexColor(currentEditorColor)}</Text>
                 </View>
               </View>
             ) : (
@@ -680,12 +829,16 @@ export default function SettingsScreen() {
                   const left = 120 + Math.cos(angle) * wheelRadius - itemSize / 2;
                   const top = 120 + Math.sin(angle) * wheelRadius - itemSize / 2;
                   const isSelected =
-                    normalizeHexColor(pendingAccentColor).toLowerCase() === value.toLowerCase();
+                    normalizeHexColor(currentEditorColor).toLowerCase() === value.toLowerCase();
 
                   return (
                     <Pressable
                       key={value}
-                      onPress={() => setPendingAccentColor(value)}
+                      onPress={() =>
+                        activeColorEditor === "background"
+                          ? setPendingBackgroundColor(value)
+                          : setPendingAccentColor(value)
+                      }
                       style={[
                         styles.wheelColorButton,
                         { backgroundColor: value, left, top },
@@ -701,11 +854,11 @@ export default function SettingsScreen() {
                   <View
                     style={[
                       styles.wheelCenterSwatch,
-                      { backgroundColor: normalizeHexColor(pendingAccentColor) }
+                      { backgroundColor: normalizeHexColor(currentEditorColor) }
                     ]}
                   />
                   <Text style={styles.wheelCenterValue}>
-                    {normalizeHexColor(pendingAccentColor)}
+                    {normalizeHexColor(currentEditorColor)}
                   </Text>
                 </View>
               </View>
@@ -716,26 +869,36 @@ export default function SettingsScreen() {
               <TextInput
                 autoCapitalize="characters"
                 autoCorrect={false}
-                onChangeText={(value) => setPendingAccentColor(normalizeHexColor(value))}
-                placeholder="#C56F2A"
+                onChangeText={(value) =>
+                  activeColorEditor === "background"
+                    ? setPendingBackgroundColor(normalizeHexColor(value))
+                    : setPendingAccentColor(normalizeHexColor(value))
+                }
+                placeholder={activeColorEditor === "background" ? "#F3ECDF" : "#C56F2A"}
                 placeholderTextColor={colors.muted}
                 style={styles.input}
-                value={normalizeHexColor(pendingAccentColor)}
+                value={normalizeHexColor(currentEditorColor)}
               />
             </View>
 
             <View style={styles.modalActionRow}>
               <Pressable
                 onPress={() => {
-                  setPendingAccentColor(normalizeHexColor(accentColor));
-                  setIsAccentModalOpen(false);
+                  if (activeColorEditor === "background") {
+                    setPendingBackgroundColor(normalizeHexColor(backgroundColor ?? colors.background));
+                  } else {
+                    setPendingAccentColor(normalizeHexColor(accentColor));
+                  }
+                  setActiveColorEditor(null);
                 }}
                 style={styles.secondaryButton}
               >
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
-              <Pressable onPress={() => void applyAccentColor()} style={styles.primaryButton}>
-                <Text style={styles.primaryButtonText}>Apply Accent</Text>
+              <Pressable onPress={() => void applyColorSelection()} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>
+                  {activeColorEditor === "background" ? "Apply Background" : "Apply Accent"}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -875,11 +1038,19 @@ function createStyles(theme: AppTheme) {
       paddingVertical: spacing.sm
     },
     appearanceModeButton: {
-      minHeight: 42
+      flexBasis: "auto",
+      flexGrow: 0,
+      flexShrink: 0,
+      minHeight: 42,
+      minWidth: 84,
+      paddingHorizontal: spacing.lg
     },
     modeButtonActive: {
       backgroundColor: colors.primary,
       borderColor: colors.primary
+    },
+    buttonDisabled: {
+      opacity: 0.55
     },
     modeButtonText: {
       color: colors.text,

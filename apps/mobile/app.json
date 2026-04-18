@@ -9,7 +9,8 @@
       "expo-sqlite"
     ],
     "experiments": {
-      "typedRoutes": true
+      "typedRoutes": true,
+      "autolinkingModuleResolution": true
     }
   }
 }

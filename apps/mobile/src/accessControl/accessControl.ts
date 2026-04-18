@@ -86,7 +86,7 @@ export function normalizeAccessControlState(
   state: Partial<AccessControlState> | null | undefined
 ): AccessControlState {
   const personalNavVisibility = NAV_KEYS.reduce<Record<NavKey, boolean>>((accumulator, key) => {
-    accumulator[key] = state?.personalNavVisibility?.[key] ?? true;
+    accumulator[key] = key === "user" ? true : (state?.personalNavVisibility?.[key] ?? true);
     return accumulator;
   }, {} as Record<NavKey, boolean>);
 
@@ -96,7 +96,8 @@ export function normalizeAccessControlState(
       name: position.name,
       description: position.description ?? "",
       pageAccess: NAV_KEYS.reduce<Record<NavKey, PageAccessLevel>>((accumulator, key) => {
-        accumulator[key] = position.pageAccess?.[key] ?? "read";
+        const nextLevel = position.pageAccess?.[key] ?? "read";
+        accumulator[key] = key === "user" && nextLevel === "hidden" ? "read" : nextLevel;
         return accumulator;
       }, {} as Record<NavKey, PageAccessLevel>)
     })) ?? defaultAccessControlState.positions;
@@ -113,4 +114,3 @@ export function normalizeAccessControlState(
     positions
   };
 }
-

@@ -14,6 +14,7 @@ import {
   isSecureStoreBacked,
   setSecureJson
 } from "./localSecureStore";
+import { logApiEvent } from "./apiLogger";
 
 type StoredConnectionRecord = {
   connectionId: number;
@@ -172,6 +173,14 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
   }
 
   async saveCredentials(input: IntegrationCredentialInput): Promise<IntegrationConnection> {
+    logApiEvent("integration", "saveCredentials", "request", {
+      connectionId: input.connectionId ?? "new",
+      connectionName: input.connectionName,
+      integrationKey: input.integrationKey,
+      mode: input.mode,
+      valueKeys: Object.keys(input.values)
+    });
+
     const integration = SUPPORTED_INTEGRATIONS.find(
       (entry) => entry.integrationKey === input.integrationKey
     );
@@ -214,13 +223,29 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
       await this.saveConnectionIndex([...connectionIndex, record.connectionId]);
     }
 
-    return toConnection(integration, record, await isSecureStoreBacked());
+    const connection = toConnection(integration, record, await isSecureStoreBacked());
+    logApiEvent("integration", "saveCredentials", "response", {
+      connectionId: connection.connectionId,
+      connectionName: connection.connectionName,
+      integrationKey: connection.integrationKey,
+      mode: connection.mode,
+      hasStoredCredentials: connection.hasStoredCredentials
+    });
+    return connection;
   }
 
   async prepareOAuthConnection(connectionId: number): Promise<PreparedIntegrationOAuth | null> {
+    logApiEvent("integration", "prepareOAuthConnection", "request", {
+      connectionId
+    });
     const connections = await this.listConnections();
     const connection = connections.find((entry) => entry.connectionId === connectionId);
     if (!connection || connection.integrationKey !== "etsy") {
+      logApiEvent("integration", "prepareOAuthConnection", "response", {
+        connectionId,
+        prepared: false,
+        reason: "connection-not-found-or-unsupported"
+      });
       return null;
     }
 
@@ -259,7 +284,7 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
       code_challenge_method: "S256"
     });
 
-    return {
+    const prepared = {
       connectionId,
       integrationKey: connection.integrationKey,
       authorizationUrl: `https://www.etsy.com/oauth/connect?${query.toString()}`,
@@ -268,16 +293,35 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
       state,
       requestedAt
     };
+    logApiEvent("integration", "prepareOAuthConnection", "response", {
+      connectionId,
+      integrationKey: connection.integrationKey,
+      redirectUri,
+      scopes: ETSY_SCOPES,
+      authorizationUrl: prepared.authorizationUrl
+    });
+    return prepared;
   }
 
   async removeCredentials(connectionId: number) {
+    logApiEvent("integration", "removeCredentials", "request", {
+      connectionId
+    });
     await deleteSecureItem(getStorageKey(connectionId));
     await deleteSecureItem(`${OAUTH_STATE_PREFIX}${connectionId}`);
     const connectionIndex = await this.getConnectionIndex();
     await this.saveConnectionIndex(connectionIndex.filter((entry) => entry !== connectionId));
+    logApiEvent("integration", "removeCredentials", "response", {
+      connectionId,
+      removed: true
+    });
   }
 
   async recordSyncResult(connectionId: number, syncedOrderCount: number) {
+    logApiEvent("integration", "recordSyncResult", "request", {
+      connectionId,
+      syncedOrderCount
+    });
     const existing = await getSecureJson<StoredConnectionRecord>(getStorageKey(connectionId));
     if (!existing) {
       throw new Error("Integration connection not found.");
@@ -294,5 +338,10 @@ export class LocalIntegrationAuthService implements IntegrationAuthService {
     };
 
     await setSecureJson(getStorageKey(connectionId), nextRecord);
+    logApiEvent("integration", "recordSyncResult", "response", {
+      connectionId,
+      lastSyncedAt: nextRecord.lastSyncedAt,
+      syncedOrderCount: nextRecord.syncedOrderCount
+    });
   }
 }

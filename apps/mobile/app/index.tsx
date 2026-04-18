@@ -1,7 +1,8 @@
 import { useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppNav } from "../src/components/AppNav";
+import { Pressable } from "../src/components/InteractivePressable";
 import { useBootstrapApp } from "../src/hooks/useBootstrapApp";
 import { useFulfillmentRuns } from "../src/hooks/useFulfillmentRuns";
 import { useWorkflowTemplates } from "../src/hooks/useWorkflowTemplates";

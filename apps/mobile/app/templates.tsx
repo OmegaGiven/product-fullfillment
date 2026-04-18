@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { MessageTemplate } from "../src/domain";
+import { Pressable } from "../src/components/InteractivePressable";
 import { useBootstrapApp } from "../src/hooks/useBootstrapApp";
 import { useMessageTemplates } from "../src/hooks/useMessageTemplates";
 import { AppNav } from "../src/components/AppNav";
@@ -29,7 +30,6 @@ export default function TemplatesScreen() {
   const { templates, saveTemplate, deleteTemplate } = useMessageTemplates();
   const [draft, setDraft] = useState<DraftTemplate | null>(null);
   const [templatePendingDelete, setTemplatePendingDelete] = useState<MessageTemplate | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -43,12 +43,11 @@ export default function TemplatesScreen() {
       return;
     }
     if (!draft.name.trim() || !draft.subject.trim() || !draft.body.trim()) {
-      setError("Name, subject, and body are required.");
+      showToast("Name, subject, and body are required.", { variant: "error", durationMs: 4200 });
       return;
     }
 
     setIsSaving(true);
-    setError(null);
     try {
       await saveTemplate({
         ...draft,
@@ -56,10 +55,10 @@ export default function TemplatesScreen() {
         subject: draft.subject.trim(),
         body: draft.body.trim()
       });
-      showToast("Saved template");
+      showToast("Saved template", { variant: "success" });
       setDraft(null);
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsSaving(false);
     }
@@ -71,16 +70,15 @@ export default function TemplatesScreen() {
     }
 
     setIsDeleting(true);
-    setError(null);
     try {
       await deleteTemplate(templatePendingDelete.id);
-      showToast("Deleted template");
+      showToast("Deleted template", { variant: "success" });
       setTemplatePendingDelete(null);
       if (draft?.id === templatePendingDelete.id) {
         setDraft(null);
       }
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsDeleting(false);
     }
@@ -108,18 +106,11 @@ export default function TemplatesScreen() {
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <AppNav title="Templates" active="templates" />
 
-        {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
-
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
             <Text style={styles.cardTitle}>Message Templates</Text>
             <Pressable
               onPress={() => {
-                setError(null);
                 setDraft(buildBlankTemplate(sortedTemplates.length));
               }}
               style={styles.primaryButton}
@@ -141,10 +132,7 @@ export default function TemplatesScreen() {
                 </View>
                 <View style={styles.templateActions}>
                   <Pressable
-                    onPress={() => {
-                      setError(null);
-                      setDraft({ ...template });
-                    }}
+                    onPress={() => setDraft({ ...template })}
                     style={styles.secondaryButton}
                   >
                     <Text style={styles.secondaryButtonText}>Edit</Text>

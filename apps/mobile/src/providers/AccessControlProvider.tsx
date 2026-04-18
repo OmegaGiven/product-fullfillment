@@ -103,7 +103,7 @@ export function AccessControlProvider({ children }: PropsWithChildren) {
                   ...position,
                   pageAccess: {
                     ...position.pageAccess,
-                    [page]: level
+                    [page]: page === "user" && level === "hidden" ? "read" : level
                   }
                 }
               : position
@@ -127,6 +127,10 @@ export function AccessControlProvider({ children }: PropsWithChildren) {
         });
       },
       toggleNavVisibility: async (page: NavKey) => {
+        if (page === "user") {
+          return;
+        }
+
         await persist({
           ...state,
           personalNavVisibility: {

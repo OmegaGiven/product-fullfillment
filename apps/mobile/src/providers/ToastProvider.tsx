@@ -10,39 +10,62 @@ import {
 import { Platform, StyleSheet, Text, View } from "react-native";
 
 import { useAppTheme } from "./AppearanceProvider";
+import { Pressable } from "../components/InteractivePressable";
 
+type ToastVariant = "info" | "success" | "error";
 type ToastContextValue = {
-  showToast: (message: string) => void;
+  showToast: (
+    message: string,
+    options?: {
+      durationMs?: number;
+      variant?: ToastVariant;
+    }
+  ) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 const TOAST_DURATION_MS = 2200;
 
+type ToastState = {
+  durationMs: number;
+  message: string;
+  variant: ToastVariant;
+} | null;
+
 export function ToastProvider({ children }: PropsWithChildren) {
   const { theme } = useAppTheme();
   const { colors, radius, spacing } = theme;
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  function clearToast() {
+    setToast(null);
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }
+
   useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
+    return clearToast;
   }, []);
 
   const value = useMemo<ToastContextValue>(
     () => ({
-      showToast: (nextMessage: string) => {
-        setMessage(nextMessage);
+      showToast: (message, options) => {
+        const nextToast = {
+          durationMs: options?.durationMs ?? TOAST_DURATION_MS,
+          message,
+          variant: options?.variant ?? "info"
+        } satisfies NonNullable<ToastState>;
+
+        setToast(nextToast);
         if (timeoutRef.current) {
           clearTimeout(timeoutRef.current);
         }
         timeoutRef.current = setTimeout(() => {
-          setMessage(null);
-          timeoutRef.current = null;
-        }, TOAST_DURATION_MS);
+          clearToast();
+        }, nextToast.durationMs);
       }
     }),
     []
@@ -52,7 +75,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
     overlay: {
       left: 0,
       paddingHorizontal: spacing.lg,
-      pointerEvents: "none",
+      pointerEvents: "box-none",
       position: "absolute",
       right: 0,
       top: Platform.OS === "web" ? spacing.lg : spacing.xl,
@@ -64,25 +87,82 @@ export function ToastProvider({ children }: PropsWithChildren) {
       borderColor: colors.accent,
       borderRadius: radius.md,
       borderWidth: 1,
+      flexDirection: "row",
+      gap: spacing.md,
+      justifyContent: "space-between",
       maxWidth: 420,
+      minWidth: 280,
+      pointerEvents: "auto",
       paddingHorizontal: spacing.lg,
       paddingVertical: spacing.md
+    },
+    toastContent: {
+      flex: 1,
+      gap: spacing.xs
+    },
+    toastSuccess: {
+      borderColor: colors.success
+    },
+    toastError: {
+      borderColor: colors.danger
+    },
+    toastLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: "800",
+      letterSpacing: 0.8,
+      textTransform: "uppercase"
     },
     toastText: {
       color: colors.text,
       fontSize: 14,
       fontWeight: "700",
-      textAlign: "center"
+      lineHeight: 20
+    },
+    closeButton: {
+      alignItems: "center",
+      alignSelf: "flex-start",
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 28,
+      minWidth: 28,
+      paddingHorizontal: spacing.sm
+    },
+    closeButtonText: {
+      color: colors.muted,
+      fontSize: 14,
+      fontWeight: "800",
+      lineHeight: 16
     }
   });
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      {message ? (
+      {toast ? (
         <View style={styles.overlay}>
-          <View style={styles.toast}>
-            <Text style={styles.toastText}>{message}</Text>
+          <View
+            style={[
+              styles.toast,
+              toast.variant === "success" ? styles.toastSuccess : null,
+              toast.variant === "error" ? styles.toastError : null
+            ]}
+          >
+            <View style={styles.toastContent}>
+              <Text style={styles.toastLabel}>
+                {toast.variant === "success"
+                  ? "Success"
+                  : toast.variant === "error"
+                    ? "Action failed"
+                    : "Notice"}
+              </Text>
+              <Text style={styles.toastText}>{toast.message}</Text>
+            </View>
+            <Pressable accessibilityLabel="Dismiss notification" onPress={clearToast} style={styles.closeButton}>
+              <Text style={styles.closeButtonText}>×</Text>
+            </Pressable>
           </View>
         </View>
       ) : null}

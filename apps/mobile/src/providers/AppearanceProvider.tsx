@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type PropsWith
 import { getSecureJson, setSecureJson } from "../services/local/localSecureStore";
 import {
   buildTheme,
+  type BackgroundColor,
   defaultAppearance,
   type AccentColor,
   type AppearanceMode,
@@ -12,15 +13,18 @@ import {
 type AppearanceState = {
   mode: AppearanceMode;
   accentColor: AccentColor;
+  backgroundColor: BackgroundColor | null;
   radiusScale: number;
   spacingScale: number;
 };
 
 type AppearanceContextValue = {
   accentColor: AccentColor;
+  backgroundColor: BackgroundColor | null;
   mode: AppearanceMode;
   radiusScale: number;
   setAccentColor: (accentColor: AccentColor) => Promise<void>;
+  setBackgroundColor: (backgroundColor: BackgroundColor | null) => Promise<void>;
   setMode: (mode: AppearanceMode) => Promise<void>;
   setRadiusScale: (radiusScale: number) => Promise<void>;
   setSpacingScale: (spacingScale: number) => Promise<void>;
@@ -58,6 +62,10 @@ export function AppearanceProvider({ children }: PropsWithChildren) {
             typeof stored.accentColor === "string"
               ? stored.accentColor
               : defaultAppearance.accentColor,
+          backgroundColor:
+            typeof stored.backgroundColor === "string"
+              ? stored.backgroundColor
+              : defaultAppearance.backgroundColor,
           radiusScale:
             typeof stored.radiusScale === "number"
               ? clampRadiusScale(stored.radiusScale)
@@ -85,13 +93,25 @@ export function AppearanceProvider({ children }: PropsWithChildren) {
 
     return {
       accentColor: appearance.accentColor,
+      backgroundColor: appearance.backgroundColor,
       mode: appearance.mode,
       radiusScale: appearance.radiusScale,
       setAccentColor: async (accentColor: AccentColor) => {
         await persist({ ...appearance, accentColor });
       },
+      setBackgroundColor: async (backgroundColor: BackgroundColor | null) => {
+        await persist({
+          ...appearance,
+          backgroundColor,
+          mode: backgroundColor ? "custom" : appearance.mode === "custom" ? defaultAppearance.mode : appearance.mode
+        });
+      },
       setMode: async (mode: AppearanceMode) => {
-        await persist({ ...appearance, mode });
+        await persist({
+          ...appearance,
+          mode,
+          backgroundColor: mode === "custom" ? appearance.backgroundColor : null
+        });
       },
       setRadiusScale: async (radiusScale: number) => {
         await persist({ ...appearance, radiusScale: clampRadiusScale(radiusScale) });
@@ -104,7 +124,8 @@ export function AppearanceProvider({ children }: PropsWithChildren) {
         appearance.mode,
         appearance.accentColor,
         appearance.spacingScale,
-        appearance.radiusScale
+        appearance.radiusScale,
+        appearance.backgroundColor
       )
     };
   }, [appearance]);

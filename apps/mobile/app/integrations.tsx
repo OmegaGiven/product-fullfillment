@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { AppNav } from "../src/components/AppNav";
+import { Pressable } from "../src/components/InteractivePressable";
 import { useToast } from "../src/providers/ToastProvider";
 import type {
   IntegrationConnection,
@@ -15,6 +16,7 @@ import type { AppTheme } from "../src/theme";
 type DraftModes = Record<string, "mock" | "live">;
 type DraftValues = Record<string, Record<string, string>>;
 type DraftNames = Record<string, string>;
+const ETSY_CALLBACK_PATH = "/oauth/etsy/callback";
 
 const FALLBACK_INTEGRATION_CATALOG: IntegrationDefinition[] = [
   {
@@ -57,6 +59,23 @@ function buildDraftValues(connections: IntegrationConnection[]) {
   ) as DraftValues;
 }
 
+function getSuggestedEtsyRedirectUri() {
+  if (Platform.OS !== "web" || typeof window === "undefined") {
+    return "";
+  }
+
+  const origin = window.location.origin?.trim();
+  return origin ? `${origin}${ETSY_CALLBACK_PATH}` : "";
+}
+
+function isLikelyHttpsRedirectUri(value: string) {
+  return value.startsWith("https://");
+}
+
+function isLocalhostRedirectUri(value: string) {
+  return /^http:\/\/(localhost|127\.0\.0\.1)(?::\d+)?\//i.test(value);
+}
+
 export default function IntegrationsScreen() {
   const { theme } = useAppTheme();
   const { colors } = theme;
@@ -68,20 +87,60 @@ export default function IntegrationsScreen() {
   const [draftModes, setDraftModes] = useState<DraftModes>({});
   const [draftNames, setDraftNames] = useState<DraftNames>({});
   const [draftValues, setDraftValues] = useState<DraftValues>({});
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAddIntegrationModalOpen, setIsAddIntegrationModalOpen] = useState(false);
   const [selectedIntegrationKey, setSelectedIntegrationKey] = useState<string | null>(null);
   const [preparedOAuth, setPreparedOAuth] = useState<PreparedIntegrationOAuth | null>(null);
+  const suggestedEtsyRedirectUri = getSuggestedEtsyRedirectUri();
 
   useEffect(() => {
     void refresh();
   }, []);
 
+  useEffect(() => {
+    if (!suggestedEtsyRedirectUri) {
+      return;
+    }
+
+    setDraftValues((current) => {
+      let changed = false;
+      const nextValues = { ...current };
+
+      connections.forEach((connection) => {
+        if (connection.integrationKey !== "etsy") {
+          return;
+        }
+
+        const existingValues = nextValues[connection.connectionId] ?? {};
+        if (!existingValues.redirectUri?.trim()) {
+          nextValues[connection.connectionId] = {
+            ...existingValues,
+            redirectUri: suggestedEtsyRedirectUri
+          };
+          changed = true;
+        }
+      });
+
+      if (selectedIntegrationKey === "etsy") {
+        const existingValues = nextValues["new:etsy"] ?? {};
+        if (!existingValues.redirectUri?.trim()) {
+          nextValues["new:etsy"] = {
+            ...existingValues,
+            redirectUri: suggestedEtsyRedirectUri
+          };
+          changed = true;
+        }
+      }
+
+      return changed ? nextValues : current;
+    });
+  }, [connections, selectedIntegrationKey, suggestedEtsyRedirectUri]);
+
   async function refresh() {
     setIsLoading(true);
-    setError(null);
+    setLoadError(null);
 
     try {
       const nextConnections = await integrationAuthService.listConnections();
@@ -103,7 +162,7 @@ export default function IntegrationsScreen() {
       );
       setDraftValues(buildDraftValues(nextConnections));
     } catch (nextError) {
-      setError((nextError as Error).message);
+      setLoadError((nextError as Error).message);
     } finally {
       setIsLoading(false);
     }
@@ -133,7 +192,6 @@ export default function IntegrationsScreen() {
     }
 
     setBusyKey(connectionId);
-    setError(null);
 
     try {
       await integrationAuthService.saveCredentials({
@@ -145,9 +203,9 @@ export default function IntegrationsScreen() {
       });
       await orderSyncService.syncOrders(connection.connectionId);
       await refresh();
-      showToast("Saved configuration");
+      showToast("Saved configuration", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setBusyKey(null);
     }
@@ -160,7 +218,6 @@ export default function IntegrationsScreen() {
 
     const setupKey = `new:${selectedIntegrationKey}`;
     setBusyKey(setupKey);
-    setError(null);
 
     try {
       const connection = await integrationAuthService.saveCredentials({
@@ -171,11 +228,11 @@ export default function IntegrationsScreen() {
       });
       await orderSyncService.syncOrders(connection.connectionId);
       await refresh();
-      showToast("Saved configuration");
+      showToast("Saved configuration", { variant: "success" });
       setIsAddIntegrationModalOpen(false);
       setSelectedIntegrationKey(null);
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setBusyKey(null);
     }
@@ -183,14 +240,14 @@ export default function IntegrationsScreen() {
 
   async function removeConnection(connectionId: number) {
     setBusyKey(connectionId);
-    setError(null);
 
     try {
       await integrationAuthService.removeCredentials(connectionId);
       await orderSyncService.syncOrders();
       await refresh();
+      showToast("Removed integration", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setBusyKey(null);
     }
@@ -198,13 +255,13 @@ export default function IntegrationsScreen() {
 
   async function syncConnection(connectionId: number) {
     setBusyKey(connectionId);
-    setError(null);
 
     try {
       await orderSyncService.syncOrders(connectionId);
       await refresh();
+      showToast("Integration synced", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setBusyKey(null);
     }
@@ -212,7 +269,6 @@ export default function IntegrationsScreen() {
 
   async function prepareOAuth(connectionId: number) {
     setBusyKey(`oauth:${connectionId}`);
-    setError(null);
 
     try {
       const prepared = await integrationAuthService.prepareOAuthConnection(connectionId);
@@ -220,9 +276,9 @@ export default function IntegrationsScreen() {
         throw new Error("OAuth preparation is not available for this integration.");
       }
       setPreparedOAuth(prepared);
-      showToast("Prepared Etsy OAuth URL");
+      showToast("Prepared Etsy OAuth URL", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setBusyKey(null);
     }
@@ -236,14 +292,14 @@ export default function IntegrationsScreen() {
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <AppNav title="Integrations" active="integrations" />
 
-        {error ? (
+        {loadError ? (
           <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>{loadError}</Text>
           </View>
         ) : null}
 
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.cardTitle}>Connections</Text>
+          <View />
           <Pressable onPress={() => setIsAddIntegrationModalOpen(true)} style={styles.primaryButton}>
             <Text style={styles.primaryButtonText}>Add Integration</Text>
           </Pressable>
@@ -375,6 +431,34 @@ export default function IntegrationsScreen() {
                       style={styles.input}
                       value={draftValues[connection.connectionId]?.[field.key] ?? ""}
                     />
+                    {connection.integrationKey === "etsy" && field.key === "redirectUri" ? (
+                      <>
+                        {suggestedEtsyRedirectUri ? (
+                          <Text style={styles.metaText}>
+                            Suggested from current host: {suggestedEtsyRedirectUri}
+                          </Text>
+                        ) : (
+                          <Text style={styles.metaText}>
+                            Enter the exact callback URL you registered with Etsy. No hosted origin was detected to prefill it here.
+                          </Text>
+                        )}
+                        {(draftValues[connection.connectionId]?.redirectUri ?? "").trim() ? (
+                          isLikelyHttpsRedirectUri(
+                            (draftValues[connection.connectionId]?.redirectUri ?? "").trim()
+                          ) || isLocalhostRedirectUri(
+                            (draftValues[connection.connectionId]?.redirectUri ?? "").trim()
+                          ) ? (
+                            <Text style={styles.metaText}>
+                              Etsy requires this redirect URI to exactly match the value registered for your app.
+                            </Text>
+                          ) : (
+                            <Text style={styles.warningText}>
+                              This redirect URI is not HTTPS or localhost and may be rejected by Etsy.
+                            </Text>
+                          )
+                        ) : null}
+                      </>
+                    ) : null}
                   </View>
                 ))}
 
@@ -544,6 +628,34 @@ export default function IntegrationsScreen() {
                       style={styles.input}
                       value={draftValues[`new:${selectedIntegration.integrationKey}`]?.[field.key] ?? ""}
                     />
+                    {selectedIntegration.integrationKey === "etsy" && field.key === "redirectUri" ? (
+                      <>
+                        {suggestedEtsyRedirectUri ? (
+                          <Text style={styles.metaText}>
+                            Suggested from current host: {suggestedEtsyRedirectUri}
+                          </Text>
+                        ) : (
+                          <Text style={styles.metaText}>
+                            Enter the exact callback URL you registered with Etsy. No hosted origin was detected to prefill it here.
+                          </Text>
+                        )}
+                        {(draftValues[`new:${selectedIntegration.integrationKey}`]?.redirectUri ?? "").trim() ? (
+                          isLikelyHttpsRedirectUri(
+                            (draftValues[`new:${selectedIntegration.integrationKey}`]?.redirectUri ?? "").trim()
+                          ) || isLocalhostRedirectUri(
+                            (draftValues[`new:${selectedIntegration.integrationKey}`]?.redirectUri ?? "").trim()
+                          ) ? (
+                            <Text style={styles.metaText}>
+                              Etsy requires this redirect URI to exactly match the value registered for your app.
+                            </Text>
+                          ) : (
+                            <Text style={styles.warningText}>
+                              This redirect URI is not HTTPS or localhost and may be rejected by Etsy.
+                            </Text>
+                          )
+                        ) : null}
+                      </>
+                    ) : null}
                   </View>
                 ))}
 
@@ -731,6 +843,11 @@ function createStyles(theme: AppTheme) {
     },
     metaText: {
       color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20
+    },
+    warningText: {
+      color: colors.warning,
       fontSize: 14,
       lineHeight: 20
     },

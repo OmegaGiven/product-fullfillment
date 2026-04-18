@@ -1,7 +1,8 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { Pressable } from "../components/InteractivePressable";
 import type {
   FulfillmentPhoto,
   FulfillmentRun,
@@ -13,6 +14,7 @@ import { useMessageTemplates } from "../hooks/useMessageTemplates";
 import { renderMessageTemplate } from "../messages/renderMessageTemplate";
 import { useAppTheme } from "../providers/AppearanceProvider";
 import { useServices } from "../providers/AppProviders";
+import { useToast } from "../providers/ToastProvider";
 import type { AppTheme } from "../theme";
 import { createLocalRecordId, nowIso } from "../utils";
 
@@ -68,6 +70,7 @@ function formatRecipient(
 export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
   const { theme } = useAppTheme();
   const styles = createStyles(theme);
+  const { showToast } = useToast();
   const { state, refresh } = useFulfillmentRun(run.id);
   const {
     storageService,
@@ -77,7 +80,6 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
     messageService
   } = useServices();
   const [isBusy, setIsBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [orders, setOrders] = useState<ImportedOrder[]>([]);
   const [orderSearch, setOrderSearch] = useState("");
   const [isDebugExpanded, setIsDebugExpanded] = useState(false);
@@ -154,7 +156,6 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
   const orderSearchPresets = ["", ...new Set(orders.map((order) => order.integrationKey))];
 
   async function addPhoto(label: "product" | "label") {
-    setError(null);
     try {
       const result = await ImagePicker.launchCameraAsync({
         quality: 0.8
@@ -179,7 +180,7 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       await refresh();
       await onRunUpdated?.();
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     }
   }
 
@@ -189,7 +190,6 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
     }
 
     setIsBusy(true);
-    setError(null);
     try {
       if (currentStep.type === "capture-photos") {
         const hasProduct = currentState.photos.some((photo) => photo.label === "product");
@@ -239,7 +239,7 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       await refresh();
       await onRunUpdated?.();
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsBusy(false);
     }
@@ -247,18 +247,17 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
 
   async function rerunOcrAndMatching() {
     setIsBusy(true);
-    setError(null);
     try {
-        await ocrService.runOcr(run.id);
-        await matchService.findMatchCandidates(run.id);
-        await refresh();
-        await onRunUpdated?.();
-      } catch (nextError) {
-        setError((nextError as Error).message);
-      } finally {
-        setIsBusy(false);
-      }
+      await ocrService.runOcr(run.id);
+      await matchService.findMatchCandidates(run.id);
+      await refresh();
+      await onRunUpdated?.();
+    } catch (nextError) {
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
+    } finally {
+      setIsBusy(false);
     }
+  }
 
   async function handleBack() {
     if (currentState.run.currentStepIndex === 0) {
@@ -266,13 +265,12 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
     }
 
     setIsBusy(true);
-    setError(null);
     try {
       await workflowService.goToPreviousStep(run.id);
       await refresh();
       await onRunUpdated?.();
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsBusy(false);
     }
@@ -280,13 +278,12 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
 
   async function chooseCandidate(orderId: number) {
     setIsBusy(true);
-    setError(null);
     try {
       await matchService.confirmMatchedOrder(run.id, orderId);
       await refresh();
       await onRunUpdated?.();
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsBusy(false);
     }
@@ -298,13 +295,13 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
     }
 
     setIsBusy(true);
-    setError(null);
     try {
       await messageService.approveAndSend(run.id, currentState.previewMessage.channel);
       await refresh();
       await onRunUpdated?.();
+      showToast("Customer message sent.", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsBusy(false);
     }
@@ -332,12 +329,6 @@ export function WorkflowScreen({ run, workflow, onRunUpdated }: Props) {
       <View style={styles.featureCard}>
         <Text style={styles.cardBody}>{currentStep?.description}</Text>
       </View>
-
-      {error ? (
-        <View style={styles.errorCard}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
 
       {(currentStep?.type === "capture-photos" || currentStep?.type === "review-photos") && (
         <View style={styles.card}>

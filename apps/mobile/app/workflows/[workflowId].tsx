@@ -1,8 +1,9 @@
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { StepType, WorkflowStep, WorkflowTemplate } from "../../src/domain";
+import { Pressable } from "../../src/components/InteractivePressable";
 import { useBootstrapApp } from "../../src/hooks/useBootstrapApp";
 import { useMessageTemplates } from "../../src/hooks/useMessageTemplates";
 import { useWorkflowTemplates } from "../../src/hooks/useWorkflowTemplates";
@@ -69,7 +70,6 @@ export default function WorkflowDetailScreen() {
     [templates, workflowId]
   );
   const [draft, setDraft] = useState<WorkflowTemplate | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [openModuleTypeStepId, setOpenModuleTypeStepId] = useState<string | null>(null);
   const [openInsertMenu, setOpenInsertMenu] = useState<{
@@ -201,20 +201,22 @@ export default function WorkflowDetailScreen() {
       return;
     }
     if (draft.steps.length === 0) {
-      setError("Add at least one module before saving the workflow.");
+      showToast("Add at least one module before saving the workflow.", {
+        variant: "error",
+        durationMs: 4200
+      });
       return;
     }
 
     setIsSaving(true);
-    setError(null);
     try {
       await saveTemplate({
         ...draft,
         stepOrder: draft.steps.map((step) => step.id)
       });
-      showToast("Saved workflow");
+      showToast("Saved workflow", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsSaving(false);
     }
@@ -240,12 +242,6 @@ export default function WorkflowDetailScreen() {
   return (
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
       <AppNav title={draft.name} active="workflows" />
-
-      {error ? (
-        <View style={styles.errorCard}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Workflow Name</Text>
@@ -281,6 +277,30 @@ export default function WorkflowDetailScreen() {
                 disabled={index === draft.steps.length - 1}
               >
                 <Text style={styles.secondaryButtonText}>Move Down</Text>
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  setOpenInsertMenu((current) =>
+                    current?.stepId === step.id && current.placement === "above"
+                      ? null
+                      : { stepId: step.id, placement: "above" }
+                  )
+                }
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>Add Above</Text>
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  setOpenInsertMenu((current) =>
+                    current?.stepId === step.id && current.placement === "below"
+                      ? null
+                      : { stepId: step.id, placement: "below" }
+                  )
+                }
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>Add Below</Text>
               </Pressable>
               <Pressable onPress={() => removeStep(step.id)} style={styles.ghostButton}>
                 <Text style={styles.ghostButtonText}>Remove</Text>
@@ -586,33 +606,6 @@ export default function WorkflowDetailScreen() {
               </View>
             </>
           ) : null}
-
-          <View style={styles.insertControlsRow}>
-            <Pressable
-              onPress={() =>
-                setOpenInsertMenu((current) =>
-                  current?.stepId === step.id && current.placement === "above"
-                    ? null
-                    : { stepId: step.id, placement: "above" }
-                )
-              }
-              style={styles.secondaryButton}
-            >
-              <Text style={styles.secondaryButtonText}>Add Above</Text>
-            </Pressable>
-            <Pressable
-              onPress={() =>
-                setOpenInsertMenu((current) =>
-                  current?.stepId === step.id && current.placement === "below"
-                    ? null
-                    : { stepId: step.id, placement: "below" }
-                )
-              }
-              style={styles.secondaryButton}
-            >
-              <Text style={styles.secondaryButtonText}>Add Below</Text>
-            </Pressable>
-          </View>
 
           {openInsertMenu?.stepId === step.id ? (
             <View style={styles.insertMenuCard}>

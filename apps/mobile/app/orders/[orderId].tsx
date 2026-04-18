@@ -1,7 +1,8 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppNav } from "../../src/components/AppNav";
+import { Pressable } from "../../src/components/InteractivePressable";
 import { useOrders } from "../../src/hooks/useOrders";
 import { useAppTheme } from "../../src/providers/AppearanceProvider";
 import type { AppTheme } from "../../src/theme";

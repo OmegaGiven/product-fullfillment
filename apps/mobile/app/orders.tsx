@@ -3,22 +3,74 @@ import { useEffect, useState } from "react";
 import {
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View
 } from "react-native";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
 import * as Sharing from "expo-sharing";
 
 import { AppNav } from "../src/components/AppNav";
+import { Pressable } from "../src/components/InteractivePressable";
+import { useColumnVisibility } from "../src/hooks/useColumnVisibility";
 import { useOrders, type EnrichedOrder } from "../src/hooks/useOrders";
 import { useAppTheme } from "../src/providers/AppearanceProvider";
 import { useServices } from "../src/providers/AppProviders";
+import { useToast } from "../src/providers/ToastProvider";
+import type { Address, MessageChannel } from "../src/domain";
+import { parseRecipient } from "../src/services/local/ocrParsing";
 import type { IntegrationConnection } from "../src/services/interfaces";
 import type { AppTheme } from "../src/theme";
+import { nowIso } from "../src/utils";
+
+type OrderColumnKey =
+  | "order"
+  | "store"
+  | "platform"
+  | "buyer"
+  | "address"
+  | "channels"
+  | "created"
+  | "fulfillmentId";
+
+const ORDER_COLUMN_LABELS: Record<OrderColumnKey, string> = {
+  order: "Order ID",
+  store: "Store",
+  platform: "Platform",
+  buyer: "Buyer",
+  address: "Ship To",
+  channels: "Channels",
+  created: "Created",
+  fulfillmentId: "Fulfillment ID"
+};
+
+const DEFAULT_ORDER_COLUMN_VISIBILITY: Record<OrderColumnKey, boolean> = {
+  order: true,
+  store: true,
+  platform: true,
+  buyer: true,
+  address: true,
+  channels: true,
+  created: true,
+  fulfillmentId: true
+};
+
+type ManualOrderDraft = {
+  storeName: string;
+  integrationConnectionId: number | null;
+  integrationKey: string;
+  integrationName: string;
+  orderNumber: string;
+  buyerName: string;
+  buyerEmail: string;
+  shippingAddress: Address;
+  availableChannels: MessageChannel[];
+};
+
+const DEFAULT_CHANNELS: MessageChannel[] = ["email", "manual"];
 
 function formatAddress(order: {
   shippingAddress: {
@@ -41,50 +93,95 @@ function escapeCsvValue(value: string) {
   return `"${normalized}"`;
 }
 
-function buildOrderExportCsv(orders: EnrichedOrder[]) {
-  const header = [
-    "Store",
-    "Platform",
-    "Integration Key",
-    "Order",
-    "Buyer",
-    "Buyer Email",
-    "Ship To",
-    "Channels",
-    "Created",
-    "Linked Run"
-  ];
+function buildOrderExportCsv(orders: EnrichedOrder[], visibleColumns: OrderColumnKey[]) {
+  const header = visibleColumns.map((column) => {
+    switch (column) {
+      case "order":
+        return "Order ID";
+      case "store":
+        return "Store";
+      case "platform":
+        return "Platform";
+      case "buyer":
+        return "Buyer";
+      case "address":
+        return "Ship To";
+      case "channels":
+        return "Channels";
+      case "created":
+        return "Created";
+      case "fulfillmentId":
+        return "Fulfillment ID";
+    }
+  });
 
-  const rows = orders.map((order) => [
-    order.integrationConnectionName ?? "",
-    order.integrationName,
-    order.integrationKey,
-    order.orderNumber,
-    order.buyerName,
-    order.buyerEmail ?? "",
-    formatAddress(order),
-    order.availableChannels.join(", "),
-    order.createdAt,
-    order.linkedFulfillmentId ?? ""
-  ]);
+  const rows = orders.map((order) =>
+    visibleColumns.map((column) => {
+      switch (column) {
+        case "order":
+          return order.id;
+        case "store":
+          return order.integrationConnectionName ?? "";
+        case "platform":
+          return order.integrationName;
+        case "buyer":
+          return `${order.buyerName}${order.buyerEmail ? ` (${order.buyerEmail})` : ""}`;
+        case "address":
+          return formatAddress(order);
+        case "channels":
+          return order.availableChannels.join(", ");
+        case "created":
+          return order.createdAt;
+        case "fulfillmentId":
+          return order.linkedFulfillmentId ?? "";
+      }
+    })
+  );
 
   return [header, ...rows]
     .map((row) => row.map((value) => escapeCsvValue(String(value))).join(","))
     .join("\n");
 }
 
+function createBlankManualOrderDraft(): ManualOrderDraft {
+  return {
+    storeName: "",
+    integrationConnectionId: null,
+    integrationKey: "",
+    integrationName: "",
+    orderNumber: "",
+    buyerName: "",
+    buyerEmail: "",
+    shippingAddress: {
+      name: "",
+      address1: "",
+      address2: "",
+      city: "",
+      state: "",
+      postalCode: "",
+      phone: ""
+    },
+    availableChannels: DEFAULT_CHANNELS
+  };
+}
+
 export default function OrdersScreen() {
   const router = useRouter();
   const { theme } = useAppTheme();
   const { colors } = theme;
+  const { showToast } = useToast();
   const styles = createStyles(theme);
   const { orders, isLoading, refresh } = useOrders();
-  const { integrationAuthService, orderSyncService } = useServices();
+  const { integrationAuthService, orderSyncService, storageService } = useServices();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSyncMenuOpen, setIsSyncMenuOpen] = useState(false);
+  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+  const [isManualOrderOpen, setIsManualOrderOpen] = useState(false);
+  const [isSavingManualOrder, setIsSavingManualOrder] = useState(false);
+  const [isImportingLabel, setIsImportingLabel] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [connections, setConnections] = useState<IntegrationConnection[]>([]);
+  const [manualOrderDraft, setManualOrderDraft] = useState<ManualOrderDraft>(createBlankManualOrderDraft());
   const [filters, setFilters] = useState({
     store: "",
     platform: "",
@@ -110,6 +207,54 @@ export default function OrdersScreen() {
     key: null,
     direction: null
   });
+  const { visibility, visibleColumnKeys, toggleColumn } = useColumnVisibility<OrderColumnKey>(
+    "orders-column-visibility",
+    DEFAULT_ORDER_COLUMN_VISIBILITY
+  );
+
+  const existingBuyerOptions = Array.from(
+    new Map(
+      orders.map((order) => [
+        `${order.buyerName}|${order.buyerEmail ?? ""}`,
+        {
+          buyerEmail: order.buyerEmail ?? "",
+          buyerName: order.buyerName
+        }
+      ])
+    ).values()
+  ).sort((left, right) => left.buyerName.localeCompare(right.buyerName));
+
+  const existingShipToOptions = Array.from(
+    new Map(
+      orders.map((order) => [
+        [
+          order.shippingAddress.name,
+          order.shippingAddress.address1,
+          order.shippingAddress.address2 ?? "",
+          order.shippingAddress.city,
+          order.shippingAddress.state,
+          order.shippingAddress.postalCode,
+          order.shippingAddress.phone ?? ""
+        ].join("|"),
+        order.shippingAddress
+      ])
+    ).values()
+  ).sort((left, right) => left.name.localeCompare(right.name));
+
+  const platformOptions = Array.from(
+    new Map(
+      [
+        ...connections.map((connection) => ({
+          integrationKey: connection.integrationKey,
+          integrationName: connection.integrationName
+        })),
+        ...orders.map((order) => ({
+          integrationKey: order.integrationKey,
+          integrationName: order.integrationName
+        }))
+      ].map((option) => [option.integrationKey, option])
+    ).values()
+  ).sort((left, right) => left.integrationName.localeCompare(right.integrationName));
 
   useEffect(() => {
     let isMounted = true;
@@ -225,16 +370,187 @@ export default function OrdersScreen() {
     return sortState.direction === "asc" ? " ↑" : " ↓";
   }
 
+  function resetManualOrderDraft() {
+    setManualOrderDraft(createBlankManualOrderDraft());
+  }
+
+  function updateManualOrderDraft(
+    updater: (current: ManualOrderDraft) => ManualOrderDraft
+  ) {
+    setManualOrderDraft((current) => updater(current));
+  }
+
+  function applyConnection(connection: IntegrationConnection) {
+    updateManualOrderDraft((current) => ({
+      ...current,
+      storeName: connection.connectionName,
+      integrationConnectionId: connection.connectionId,
+      integrationKey: connection.integrationKey,
+      integrationName: connection.integrationName,
+      availableChannels: connection.integrationKey === "etsy"
+        ? ["integration-message", "email", "manual"]
+        : DEFAULT_CHANNELS
+    }));
+  }
+
+  function applyPlatform(integrationKey: string, integrationName: string) {
+    updateManualOrderDraft((current) => ({
+      ...current,
+      integrationConnectionId: current.integrationConnectionId,
+      integrationKey,
+      integrationName,
+      availableChannels:
+        integrationKey === "etsy" ? ["integration-message", "email", "manual"] : DEFAULT_CHANNELS
+    }));
+  }
+
+  function toggleManualChannel(channel: MessageChannel) {
+    updateManualOrderDraft((current) => {
+      const nextChannels = current.availableChannels.includes(channel)
+        ? current.availableChannels.filter((value) => value !== channel)
+        : [...current.availableChannels, channel];
+      return {
+        ...current,
+        availableChannels: nextChannels.length === 0 ? ["manual"] : nextChannels
+      };
+    });
+  }
+
+  async function handleSaveManualOrder() {
+    const orderNumber = manualOrderDraft.orderNumber.trim();
+    const buyerName = manualOrderDraft.buyerName.trim();
+    const buyerEmail = manualOrderDraft.buyerEmail.trim();
+    const storeName = manualOrderDraft.storeName.trim();
+    const integrationKey = manualOrderDraft.integrationKey.trim();
+    const integrationName = manualOrderDraft.integrationName.trim();
+    const shippingAddress = {
+      ...manualOrderDraft.shippingAddress,
+      name: manualOrderDraft.shippingAddress.name.trim(),
+      address1: manualOrderDraft.shippingAddress.address1.trim(),
+      address2: manualOrderDraft.shippingAddress.address2?.trim() ?? "",
+      city: manualOrderDraft.shippingAddress.city.trim(),
+      state: manualOrderDraft.shippingAddress.state.trim(),
+      postalCode: manualOrderDraft.shippingAddress.postalCode.trim(),
+      phone: manualOrderDraft.shippingAddress.phone?.trim() ?? ""
+    };
+
+    if (!orderNumber || !buyerName || !shippingAddress.name || !shippingAddress.address1 || !shippingAddress.city || !shippingAddress.state || !shippingAddress.postalCode) {
+      showToast("Order number, buyer, and full ship-to fields are required.", {
+        variant: "error",
+        durationMs: 4200
+      });
+      return;
+    }
+
+    if (!storeName && !integrationName) {
+      showToast("Choose or enter a store or platform before saving.", {
+        variant: "error",
+        durationMs: 4200
+      });
+      return;
+    }
+
+    setIsSavingManualOrder(true);
+    try {
+      const nextId = orders.length > 0 ? Math.max(...orders.map((order) => order.id)) + 1 : 1;
+      await storageService.saveOrders([
+        {
+          id: nextId,
+          externalOrderId: `manual-${nextId}`,
+          integrationConnectionId: manualOrderDraft.integrationConnectionId ?? undefined,
+          integrationConnectionName: storeName || undefined,
+          integrationKey: integrationKey || "manual",
+          integrationName: integrationName || "Manual",
+          orderNumber,
+          buyerName,
+          buyerEmail: buyerEmail || undefined,
+          shippingAddress,
+          availableChannels:
+            buyerEmail && !manualOrderDraft.availableChannels.includes("email")
+              ? [...manualOrderDraft.availableChannels, "email"]
+              : manualOrderDraft.availableChannels,
+          createdAt: nowIso()
+        }
+      ]);
+      await refresh();
+      setIsManualOrderOpen(false);
+      resetManualOrderDraft();
+      showToast("Manual order added.", { variant: "success" });
+    } catch (nextError) {
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
+    } finally {
+      setIsSavingManualOrder(false);
+    }
+  }
+
+  async function handleImportLabel() {
+    if (Platform.OS === "web") {
+      showToast("Label OCR import is available only in native iOS and Android builds.", {
+        variant: "error",
+        durationMs: 4200
+      });
+      return;
+    }
+
+    setIsImportingLabel(true);
+    try {
+      const TextRecognition = (await import("@react-native-ml-kit/text-recognition")).default;
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: false,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 1
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+
+      const recognition = await TextRecognition.recognize(result.assets[0].uri);
+      if (!recognition.text.trim()) {
+        throw new Error("No readable text was found in the selected label image.");
+      }
+
+      const recipient = parseRecipient(recognition.text);
+      updateManualOrderDraft((current) => ({
+        ...current,
+        buyerName: recipient.name ?? current.buyerName,
+        shippingAddress: {
+          ...current.shippingAddress,
+          name: recipient.name ?? current.shippingAddress.name,
+          address1: recipient.address1 ?? current.shippingAddress.address1,
+          address2: recipient.address2 ?? current.shippingAddress.address2,
+          city: recipient.city ?? current.shippingAddress.city,
+          state: recipient.state ?? current.shippingAddress.state,
+          postalCode: recipient.postalCode ?? current.shippingAddress.postalCode,
+          phone: recipient.phone ?? current.shippingAddress.phone
+        }
+      }));
+      showToast("Label OCR imported the available recipient fields.", { variant: "success" });
+    } catch (nextError) {
+      const message = (nextError as Error).message;
+      if (message.includes("doesn't seem to be linked")) {
+        showToast(
+          "Native OCR module is not linked yet. Rebuild the iOS or Android app after installing the OCR package.",
+          { variant: "error", durationMs: 4200 }
+        );
+      } else {
+        showToast(message, { variant: "error", durationMs: 4200 });
+      }
+    } finally {
+      setIsImportingLabel(false);
+    }
+  }
+
   async function handleSync(connectionId?: number) {
     setIsSyncing(true);
-    setError(null);
     try {
       await orderSyncService.syncOrders(connectionId);
       await refresh();
       setConnections(await integrationAuthService.listConnections());
       setIsSyncMenuOpen(false);
+      showToast("Orders synced.", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsSyncing(false);
     }
@@ -242,15 +558,14 @@ export default function OrdersScreen() {
 
   async function handleExport() {
     if (filteredOrders.length === 0) {
-      setError("There are no filtered orders to export.");
+      showToast("There are no filtered orders to export.", { variant: "error", durationMs: 4200 });
       return;
     }
 
     setIsExporting(true);
-    setError(null);
 
     try {
-      const csv = buildOrderExportCsv(filteredOrders);
+      const csv = buildOrderExportCsv(filteredOrders, visibleColumnKeys);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const filename = `orders-export-${timestamp}.csv`;
 
@@ -280,8 +595,9 @@ export default function OrdersScreen() {
           UTI: "public.comma-separated-values-text"
         });
       }
+      showToast("Orders export is ready.", { variant: "success" });
     } catch (nextError) {
-      setError((nextError as Error).message);
+      showToast((nextError as Error).message, { variant: "error", durationMs: 4200 });
     } finally {
       setIsExporting(false);
     }
@@ -291,15 +607,14 @@ export default function OrdersScreen() {
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
       <AppNav title="Orders" active="orders" />
 
-      {error ? (
-        <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>Sync failed</Text>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
-
       <View style={styles.filterActionsRow}>
         <View style={styles.filterButtons}>
+          <Pressable
+            onPress={() => setIsManualOrderOpen(true)}
+            style={styles.syncButton}
+          >
+            <Text style={styles.syncButtonText}>Add Order</Text>
+          </Pressable>
           <Pressable
             onPress={() => setIsSyncMenuOpen(true)}
             style={[styles.syncButton, isSyncing ? styles.buttonDisabled : null]}
@@ -313,6 +628,12 @@ export default function OrdersScreen() {
             disabled={isExporting}
           >
             <Text style={styles.exportButtonText}>{isExporting ? "Exporting..." : "Export"}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setIsCustomizeOpen(true)}
+            style={styles.clearButton}
+          >
+            <Text style={styles.clearButtonText}>Columns</Text>
           </Pressable>
           <Pressable
             onPress={() =>
@@ -358,57 +679,73 @@ export default function OrdersScreen() {
         >
           <View style={styles.tableInner}>
             <View style={[styles.tableRow, styles.tableHeaderRow]}>
-              <Pressable
-                onPress={() => toggleSort("order")}
-                style={[styles.tableCell, styles.cellOrder, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Order ID{getSortArrow("order")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("store")}
-                style={[styles.tableCell, styles.cellStore, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Store{getSortArrow("store")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("platform")}
-                style={[styles.tableCell, styles.cellPlatform, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Platform{getSortArrow("platform")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("buyer")}
-                style={[styles.tableCell, styles.cellBuyer, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Buyer{getSortArrow("buyer")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("address")}
-                style={[styles.tableCell, styles.cellAddress, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Ship To{getSortArrow("address")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("channels")}
-                style={[styles.tableCell, styles.cellChannels, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Channels{getSortArrow("channels")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("created")}
-                style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Created{getSortArrow("created")}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => toggleSort("fulfillmentId")}
-                style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderCell]}
-              >
-                <Text style={styles.tableHeaderText}>Fulfillment ID{getSortArrow("fulfillmentId")}</Text>
-              </Pressable>
+              {visibility.order ? (
+                <Pressable
+                  onPress={() => toggleSort("order")}
+                  style={[styles.tableCell, styles.cellOrder, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Order ID{getSortArrow("order")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.store ? (
+                <Pressable
+                  onPress={() => toggleSort("store")}
+                  style={[styles.tableCell, styles.cellStore, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Store{getSortArrow("store")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.platform ? (
+                <Pressable
+                  onPress={() => toggleSort("platform")}
+                  style={[styles.tableCell, styles.cellPlatform, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Platform{getSortArrow("platform")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.buyer ? (
+                <Pressable
+                  onPress={() => toggleSort("buyer")}
+                  style={[styles.tableCell, styles.cellBuyer, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Buyer{getSortArrow("buyer")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.address ? (
+                <Pressable
+                  onPress={() => toggleSort("address")}
+                  style={[styles.tableCell, styles.cellAddress, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Ship To{getSortArrow("address")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.channels ? (
+                <Pressable
+                  onPress={() => toggleSort("channels")}
+                  style={[styles.tableCell, styles.cellChannels, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Channels{getSortArrow("channels")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.created ? (
+                <Pressable
+                  onPress={() => toggleSort("created")}
+                  style={[styles.tableCell, styles.cellDate, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Created{getSortArrow("created")}</Text>
+                </Pressable>
+              ) : null}
+              {visibility.fulfillmentId ? (
+                <Pressable
+                  onPress={() => toggleSort("fulfillmentId")}
+                  style={[styles.tableCell, styles.cellWorkflow, styles.tableHeaderCell]}
+                >
+                  <Text style={styles.tableHeaderText}>Fulfillment ID{getSortArrow("fulfillmentId")}</Text>
+                </Pressable>
+              ) : null}
             </View>
             <View style={[styles.tableRow, styles.tableFilterRow]}>
-              <View style={[styles.tableCell, styles.cellOrder]}>
+              {visibility.order ? <View style={[styles.tableCell, styles.cellOrder]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, order: value }))}
                   placeholder="Filter"
@@ -416,8 +753,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.order}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellStore]}>
+              </View> : null}
+              {visibility.store ? <View style={[styles.tableCell, styles.cellStore]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, store: value }))}
                   placeholder="Filter"
@@ -425,8 +762,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.store}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellPlatform]}>
+              </View> : null}
+              {visibility.platform ? <View style={[styles.tableCell, styles.cellPlatform]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, platform: value }))}
                   placeholder="Filter"
@@ -434,8 +771,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.platform}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellBuyer]}>
+              </View> : null}
+              {visibility.buyer ? <View style={[styles.tableCell, styles.cellBuyer]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, buyer: value }))}
                   placeholder="Filter"
@@ -443,8 +780,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.buyer}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellAddress]}>
+              </View> : null}
+              {visibility.address ? <View style={[styles.tableCell, styles.cellAddress]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, address: value }))}
                   placeholder="Filter"
@@ -452,8 +789,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.address}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellChannels]}>
+              </View> : null}
+              {visibility.channels ? <View style={[styles.tableCell, styles.cellChannels]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, channels: value }))}
                   placeholder="Filter"
@@ -461,8 +798,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.channels}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellDate]}>
+              </View> : null}
+              {visibility.created ? <View style={[styles.tableCell, styles.cellDate]}>
                 <TextInput
                   onChangeText={(value) => setFilters((current) => ({ ...current, created: value }))}
                   placeholder="MM/DD/YYYY"
@@ -470,8 +807,8 @@ export default function OrdersScreen() {
                   style={styles.filterInput}
                   value={filters.created}
                 />
-              </View>
-              <View style={[styles.tableCell, styles.cellWorkflow]} />
+              </View> : null}
+              {visibility.fulfillmentId ? <View style={[styles.tableCell, styles.cellWorkflow]} /> : null}
             </View>
 
             {sortedOrders.length === 0 && !isLoading ? (
@@ -492,26 +829,26 @@ export default function OrdersScreen() {
                 key={order.id}
                 style={[styles.tableRow, index % 2 === 0 ? styles.tableRowAlt : null]}
               >
-                <View style={[styles.tableCell, styles.cellOrder]}>
+                {visibility.order ? <View style={[styles.tableCell, styles.cellOrder]}>
                   <Text style={styles.cellPrimaryText}>{order.id}</Text>
                   <Text style={styles.cellSecondaryText}>{order.orderNumber}</Text>
-                </View>
-                <Text style={[styles.tableCell, styles.cellStore]}>
+                </View> : null}
+                {visibility.store ? <Text style={[styles.tableCell, styles.cellStore]}>
                   {order.integrationConnectionName ?? "Unlabeled Store"}
-                </Text>
-                <Text style={[styles.tableCell, styles.cellPlatform]}>{order.integrationName}</Text>
-                <View style={[styles.tableCell, styles.cellBuyer]}>
+                </Text> : null}
+                {visibility.platform ? <Text style={[styles.tableCell, styles.cellPlatform]}>{order.integrationName}</Text> : null}
+                {visibility.buyer ? <View style={[styles.tableCell, styles.cellBuyer]}>
                   <Text style={styles.cellPrimaryText}>{order.buyerName}</Text>
                   <Text style={styles.cellSecondaryText}>{order.buyerEmail ?? "No email"}</Text>
-                </View>
-                <Text style={[styles.tableCell, styles.cellAddress]}>{formatAddress(order)}</Text>
-                <Text style={[styles.tableCell, styles.cellChannels]}>
+                </View> : null}
+                {visibility.address ? <Text style={[styles.tableCell, styles.cellAddress]}>{formatAddress(order)}</Text> : null}
+                {visibility.channels ? <Text style={[styles.tableCell, styles.cellChannels]}>
                   {order.availableChannels.join(", ")}
-                </Text>
-                <Text style={[styles.tableCell, styles.cellDate]}>
+                </Text> : null}
+                {visibility.created ? <Text style={[styles.tableCell, styles.cellDate]}>
                   {new Date(order.createdAt).toLocaleDateString()}
-                </Text>
-                <View style={[styles.tableCell, styles.cellWorkflow]}>
+                </Text> : null}
+                {visibility.fulfillmentId ? <View style={[styles.tableCell, styles.cellWorkflow]}>
                   {order.linkedFulfillmentId ? (
                     <Pressable
                       onPress={() => router.push(`/runs/${order.linkedFulfillmentId}`)}
@@ -522,12 +859,309 @@ export default function OrdersScreen() {
                   ) : (
                     <Text style={styles.cellSecondaryText}>No workflow</Text>
                   )}
-                </View>
+                </View> : null}
               </View>
             ))}
           </View>
         </ScrollView>
       </View>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isManualOrderOpen}
+        onRequestClose={() => {
+          if (!isSavingManualOrder) {
+            setIsManualOrderOpen(false);
+          }
+        }}
+      >
+        <View style={styles.modalScrim}>
+          <View style={[styles.modalCard, styles.manualOrderModalCard]}>
+            <View style={styles.syncMenuHeader}>
+              <Text style={styles.syncMenuTitle}>Add Order</Text>
+              <Pressable
+                onPress={() => setIsManualOrderOpen(false)}
+                style={styles.syncMenuCloseButton}
+                disabled={isSavingManualOrder}
+              >
+                <Text style={styles.syncMenuCloseButtonText}>Close</Text>
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator contentContainerStyle={styles.manualOrderContent}>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Store</Text>
+                <TextInput
+                  value={manualOrderDraft.storeName}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({ ...current, storeName: value }))
+                  }
+                  placeholder="Enter store name"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <View style={styles.optionRow}>
+                  {connections.map((connection) => (
+                    <Pressable
+                      key={`store:${connection.connectionId}`}
+                      onPress={() => applyConnection(connection)}
+                      style={[
+                        styles.openButton,
+                        manualOrderDraft.integrationConnectionId === connection.connectionId
+                          ? styles.columnOptionActive
+                          : null
+                      ]}
+                    >
+                      <Text style={styles.openButtonText}>{connection.connectionName}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Platform</Text>
+                <TextInput
+                  value={manualOrderDraft.integrationName}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({ ...current, integrationName: value }))
+                  }
+                  placeholder="Enter platform"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <View style={styles.optionRow}>
+                  {platformOptions.map((platform) => (
+                    <Pressable
+                      key={`platform:${platform.integrationKey}`}
+                      onPress={() => applyPlatform(platform.integrationKey, platform.integrationName)}
+                      style={[
+                        styles.openButton,
+                        manualOrderDraft.integrationKey === platform.integrationKey
+                          ? styles.columnOptionActive
+                          : null
+                      ]}
+                    >
+                      <Text style={styles.openButtonText}>{platform.integrationName}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Order Number</Text>
+                <Pressable
+                  onPress={() => void handleImportLabel()}
+                  style={[styles.openButton, isImportingLabel ? styles.buttonDisabled : null]}
+                  disabled={isImportingLabel}
+                >
+                  <Text style={styles.openButtonText}>
+                    {isImportingLabel ? "Importing Label..." : "Upload Label For OCR"}
+                  </Text>
+                </Pressable>
+                <Text style={styles.cellSecondaryText}>
+                  OCR will try to fill buyer and ship-to from the label. Created date saves as today automatically.
+                </Text>
+                <TextInput
+                  value={manualOrderDraft.orderNumber}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({ ...current, orderNumber: value }))
+                  }
+                  placeholder="Enter order number"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Buyer</Text>
+                <TextInput
+                  value={manualOrderDraft.buyerName}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({ ...current, buyerName: value }))
+                  }
+                  placeholder="Buyer name"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <TextInput
+                  value={manualOrderDraft.buyerEmail}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({ ...current, buyerEmail: value }))
+                  }
+                  placeholder="Buyer email"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <View style={styles.optionRow}>
+                  {existingBuyerOptions.slice(0, 8).map((buyer) => (
+                    <Pressable
+                      key={`buyer:${buyer.buyerName}:${buyer.buyerEmail}`}
+                      onPress={() =>
+                        updateManualOrderDraft((current) => ({
+                          ...current,
+                          buyerName: buyer.buyerName,
+                          buyerEmail: buyer.buyerEmail
+                        }))
+                      }
+                      style={styles.openButton}
+                    >
+                      <Text style={styles.openButtonText}>{buyer.buyerName}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Ship To</Text>
+                <View style={styles.optionRow}>
+                  {existingShipToOptions.slice(0, 6).map((address) => (
+                    <Pressable
+                      key={`shipto:${address.name}:${address.address1}:${address.postalCode}`}
+                      onPress={() =>
+                        updateManualOrderDraft((current) => ({
+                          ...current,
+                          shippingAddress: { ...address }
+                        }))
+                      }
+                      style={styles.openButton}
+                    >
+                      <Text style={styles.openButtonText}>{address.name}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <TextInput
+                  value={manualOrderDraft.shippingAddress.name}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({
+                      ...current,
+                      shippingAddress: { ...current.shippingAddress, name: value }
+                    }))
+                  }
+                  placeholder="Recipient name"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <TextInput
+                  value={manualOrderDraft.shippingAddress.address1}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({
+                      ...current,
+                      shippingAddress: { ...current.shippingAddress, address1: value }
+                    }))
+                  }
+                  placeholder="Address line 1"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <TextInput
+                  value={manualOrderDraft.shippingAddress.address2}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({
+                      ...current,
+                      shippingAddress: { ...current.shippingAddress, address2: value }
+                    }))
+                  }
+                  placeholder="Address line 2"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+                <View style={styles.inlineFieldRow}>
+                  <TextInput
+                    value={manualOrderDraft.shippingAddress.city}
+                    onChangeText={(value) =>
+                      updateManualOrderDraft((current) => ({
+                        ...current,
+                        shippingAddress: { ...current.shippingAddress, city: value }
+                      }))
+                    }
+                    placeholder="City"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.filterInput, styles.inlineField]}
+                  />
+                  <TextInput
+                    value={manualOrderDraft.shippingAddress.state}
+                    onChangeText={(value) =>
+                      updateManualOrderDraft((current) => ({
+                        ...current,
+                        shippingAddress: { ...current.shippingAddress, state: value }
+                      }))
+                    }
+                    placeholder="State"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.filterInput, styles.inlineField]}
+                  />
+                  <TextInput
+                    value={manualOrderDraft.shippingAddress.postalCode}
+                    onChangeText={(value) =>
+                      updateManualOrderDraft((current) => ({
+                        ...current,
+                        shippingAddress: { ...current.shippingAddress, postalCode: value }
+                      }))
+                    }
+                    placeholder="ZIP"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.filterInput, styles.inlineField]}
+                  />
+                </View>
+                <TextInput
+                  value={manualOrderDraft.shippingAddress.phone}
+                  onChangeText={(value) =>
+                    updateManualOrderDraft((current) => ({
+                      ...current,
+                      shippingAddress: { ...current.shippingAddress, phone: value }
+                    }))
+                  }
+                  placeholder="Phone"
+                  placeholderTextColor={colors.muted}
+                  style={styles.filterInput}
+                />
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Channels</Text>
+                <View style={styles.optionRow}>
+                  {(["integration-message", "email", "manual"] as MessageChannel[]).map((channel) => (
+                    <Pressable
+                      key={`channel:${channel}`}
+                      onPress={() => toggleManualChannel(channel)}
+                      style={[
+                        styles.openButton,
+                        manualOrderDraft.availableChannels.includes(channel)
+                          ? styles.columnOptionActive
+                          : null
+                      ]}
+                    >
+                      <Text style={styles.openButtonText}>{channel}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.filterButtons}>
+                <Pressable
+                  onPress={() => {
+                    resetManualOrderDraft();
+                    setIsManualOrderOpen(false);
+                  }}
+                  style={styles.clearButton}
+                  disabled={isSavingManualOrder}
+                >
+                  <Text style={styles.clearButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void handleSaveManualOrder()}
+                  style={[styles.syncButton, isSavingManualOrder ? styles.buttonDisabled : null]}
+                  disabled={isSavingManualOrder}
+                >
+                  <Text style={styles.syncButtonText}>
+                    {isSavingManualOrder ? "Saving..." : "Save Order"}
+                  </Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         animationType="fade"
@@ -583,6 +1217,37 @@ export default function OrdersScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isCustomizeOpen}
+        onRequestClose={() => setIsCustomizeOpen(false)}
+      >
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <Text style={styles.errorTitle}>Columns</Text>
+            <View style={styles.filterButtons}>
+              {(
+                Object.keys(DEFAULT_ORDER_COLUMN_VISIBILITY) as OrderColumnKey[]
+              ).map((columnKey) => (
+                <Pressable
+                  key={`orders-column:${columnKey}`}
+                  onPress={() => void toggleColumn(columnKey)}
+                  style={[styles.openButton, visibility[columnKey] ? styles.columnOptionActive : null]}
+                >
+                  <Text style={styles.openButtonText}>
+                    {ORDER_COLUMN_LABELS[columnKey]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Pressable onPress={() => setIsCustomizeOpen(false)} style={styles.openButton}>
+              <Text style={styles.openButtonText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -597,18 +1262,23 @@ function createStyles(theme: AppTheme) {
       padding: spacing.xl
     },
     syncButton: {
+      alignItems: "center",
       backgroundColor: colors.accent,
       borderRadius: radius.pill,
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.sm
+      justifyContent: "center",
+      minHeight: 32,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs + 2
     },
     syncButtonDisabled: {
       opacity: 0.65
     },
     syncButtonText: {
       color: colors.surfaceRaised,
-      fontSize: 14,
-      fontWeight: "700"
+      fontSize: 13,
+      fontWeight: "700",
+      lineHeight: 13,
+      textAlignVertical: "center"
     },
     modalScrim: {
       alignItems: "center",
@@ -616,6 +1286,16 @@ function createStyles(theme: AppTheme) {
       flex: 1,
       justifyContent: "center",
       padding: spacing.lg
+    },
+    modalCard: {
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      gap: spacing.md,
+      maxWidth: 420,
+      padding: spacing.xl,
+      width: "100%"
     },
     syncMenuCard: {
       backgroundColor: colors.surfaceRaised,
@@ -627,10 +1307,41 @@ function createStyles(theme: AppTheme) {
       padding: spacing.lg,
       width: "100%"
     },
+    manualOrderModalCard: {
+      maxHeight: "88%",
+      maxWidth: 720
+    },
+    manualOrderContent: {
+      gap: spacing.md
+    },
     syncMenuHeader: {
       alignItems: "center",
       flexDirection: "row",
       justifyContent: "space-between"
+    },
+    fieldGroup: {
+      gap: spacing.sm
+    },
+    fieldLabel: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700",
+      letterSpacing: 0.4,
+      textTransform: "uppercase"
+    },
+    optionRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    inlineFieldRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    inlineField: {
+      flex: 1,
+      minWidth: 120
     },
     syncMenuTitle: {
       color: colors.text,
@@ -638,17 +1349,22 @@ function createStyles(theme: AppTheme) {
       fontWeight: "700"
     },
     syncMenuCloseButton: {
+      alignItems: "center",
       backgroundColor: colors.background,
       borderColor: colors.border,
       borderRadius: radius.pill,
       borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 36,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm
     },
     syncMenuCloseButtonText: {
       color: colors.text,
       fontSize: 14,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 14,
+      textAlignVertical: "center"
     },
     syncMenuOption: {
       backgroundColor: colors.background,
@@ -714,28 +1430,38 @@ function createStyles(theme: AppTheme) {
       opacity: 0.65
     },
     exportButton: {
+      alignItems: "center",
       backgroundColor: colors.accent,
       borderRadius: radius.pill,
+      justifyContent: "center",
+      minHeight: 32,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs + 2
     },
     exportButtonText: {
       color: colors.surfaceRaised,
       fontSize: 13,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 13,
+      textAlignVertical: "center"
     },
     clearButton: {
+      alignItems: "center",
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.borderStrong,
       borderRadius: radius.pill,
       borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 32,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs + 2
     },
     clearButtonText: {
       color: colors.text,
       fontSize: 13,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 13,
+      textAlignVertical: "center"
     },
     statCard: {
       backgroundColor: colors.surfaceRaised,
@@ -867,18 +1593,23 @@ function createStyles(theme: AppTheme) {
       fontSize: 13
     },
     linkButton: {
+      alignItems: "center",
       alignSelf: "flex-start",
       backgroundColor: colors.surfaceRaised,
       borderColor: colors.borderStrong,
       borderRadius: radius.md,
       borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 36,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm
     },
     linkButtonText: {
       color: colors.text,
       fontSize: 13,
-      fontWeight: "700"
+      fontWeight: "700",
+      lineHeight: 13,
+      textAlignVertical: "center"
     },
     emptyRow: {
       gap: spacing.sm,
@@ -894,6 +1625,29 @@ function createStyles(theme: AppTheme) {
       color: colors.muted,
       fontSize: 15,
       lineHeight: 22
+    },
+    openButton: {
+      alignItems: "center",
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.borderStrong,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 36,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    openButtonText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "700",
+      lineHeight: 14,
+      textAlignVertical: "center"
+    },
+    columnOptionActive: {
+      backgroundColor: colors.accentSoft,
+      borderColor: colors.accent,
+      borderWidth: 1
     }
   });
 }
